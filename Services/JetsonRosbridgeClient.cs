@@ -5,6 +5,8 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Collections.Generic;
+using System.Linq;
 
 namespace UAV_GCS
 {
@@ -23,7 +25,41 @@ namespace UAV_GCS
         public event Action<string> LockReceived;
         public event Action<double> TargetErrorXReceived;
         public event Action<double> TargetErrorYReceived;
+        public event Action<string> KamikazeReceived;
+        public event Action<TelemetryData> TelemetryReceived;
 
+        public async Task SendHssAreasAsync(List<HssInfoDto> hssAreas)
+        {
+            if (!IsConnected)
+                return;
+
+            if (hssAreas == null || hssAreas.Count == 0)
+                return;
+
+            var simplifiedHssAreas = hssAreas.Select(hss => new
+            {
+                id = hss.id,
+                lat = hss.hssEnlem,
+                lon = hss.hssBoylam,
+                radius = hss.hssYaricap
+            }).ToList();
+
+            string hssJson = JsonConvert.SerializeObject(simplifiedHssAreas);
+
+            var packet = new
+            {
+                op = "publish",
+                topic = "/kayzer/hss_koordinatlari",
+                msg = new
+                {
+                    data = hssJson
+                }
+            };
+
+            await SendJsonAsync(packet);
+
+            LogRequested?.Invoke("HSS koordinatları Jetson'a gönderildi. Alan sayısı: " + hssAreas.Count);
+        }
         public async Task ConnectAsync(string jetsonIp)
         {
             if (string.IsNullOrWhiteSpace(jetsonIp))
@@ -46,9 +82,11 @@ namespace UAV_GCS
 
             await SubscribeAsync("/kayzer/kilitlenme_basarili", "std_msgs/msg/String");
             await SubscribeAsync("/kayzer/real_state", "std_msgs/msg/String");
+            await SubscribeAsync("/kayzer/kamikaze/hit_packet", "std_msgs/msg/String");
 
             await SubscribeAsync("/kayzer/vision/target_error_x", "std_msgs/msg/Float64");
             await SubscribeAsync("/kayzer/vision/target_error_y", "std_msgs/msg/Float64");
+            await SubscribeAsync("/kayzer/telemetry", "std_msgs/msg/String");
 
             _ = Task.Run(ReceiveLoopAsync);
         }
@@ -101,6 +139,23 @@ namespace UAV_GCS
             LogRequested?.Invoke("Jetson komutu gönderildi: " + command);
         }
 
+        public async Task SendServerTimeMsAsync(double serverTimeMs)
+        {
+            if (!IsConnected)
+                return;
+
+            var packet = new
+            {
+                op = "publish",
+                topic = "/kayzer/server_time",
+                msg = new
+                {
+                    data = serverTimeMs
+                }
+            };
+
+            await SendJsonAsync(packet);
+        }
         public async Task SendServerTimeAsync(string timeText)
         {
             if (!IsConnected)
@@ -234,6 +289,11 @@ namespace UAV_GCS
                     StateReceived?.Invoke(data);
                     LogRequested?.Invoke("Jetson durum mesajı: " + data);
                 }
+                else if (topic == "/kayzer/kamikaze/hit_packet")
+                {
+                    KamikazeReceived?.Invoke(data);
+                    LogRequested?.Invoke("Jetson kamikaze hit packet mesajı: " + data);
+                }
                 else if (topic == "/kayzer/vision/target_error_x")
                 {
                     double value = obj["msg"]?["data"]?.Value<double>() ?? 0;
@@ -244,11 +304,89 @@ namespace UAV_GCS
                     double value = obj["msg"]?["data"]?.Value<double>() ?? 0;
                     TargetErrorYReceived?.Invoke(value);
                 }
+                else if (topic == "/kayzer/telemetry")
+                {
+                    TelemetryData telemetry = ParseJetsonTelemetry(data);
+
+                    if (telemetry != null)
+                    {
+                        TelemetryReceived?.Invoke(telemetry);
+                    }
+                }
             }
             catch (Exception ex)
             {
                 LogRequested?.Invoke("Jetson mesajı çözümlenemedi: " + ex.Message);
             }
+        }
+
+        private TelemetryData ParseJetsonTelemetry(string data)
+        {
+            if (string.IsNullOrWhiteSpace(data))
+                return null;
+
+            JObject obj = JObject.Parse(data);
+
+            double latitude = obj["latitude"]?.Value<double>() ?? 0;
+            double longitude = obj["longitude"]?.Value<double>() ?? 0;
+
+            bool gpsFix =
+                obj["gps_fix"]?.Value<bool>() ??
+                !(latitude == 0 && longitude == 0);
+
+            int batteryPercent = -1;
+
+            JToken batteryToken = obj["battery"] ?? obj["battery_percent"];
+
+            if (batteryToken != null)
+            {
+                batteryPercent = (int)Math.Round(batteryToken.Value<double>());
+            }
+
+            int satellites = 0;
+
+            JToken satellitesToken = obj["satellites"] ?? obj["satellites_visible"];
+
+            if (satellitesToken != null)
+            {
+                satellites = (int)Math.Round(satellitesToken.Value<double>());
+            }
+
+            return new TelemetryData
+            {
+                Latitude = latitude,
+                Longitude = longitude,
+
+                RelativeAltitudeMeters =
+                    obj["relative_altitude"]?.Value<double>() ??
+                    obj["altitude"]?.Value<double>() ??
+                    0,
+
+                AltitudeMeters =
+                    obj["altitude"]?.Value<double>() ??
+                    obj["relative_altitude"]?.Value<double>() ??
+                    0,
+
+                GroundSpeed =
+                    obj["speed"]?.Value<double>() ??
+                    obj["ground_speed"]?.Value<double>() ??
+                    0,
+
+                BatteryPercent = batteryPercent,
+
+                HeadingDegree =
+                    obj["heading"]?.Value<double>() ??
+                    obj["yaw"]?.Value<double>() ??
+                    0,
+
+                FlightMode =
+                    obj["flight_mode"]?.ToString() ??
+                    "JETSON",
+
+                HasGpsFix = gpsFix,
+
+                SatellitesVisible = satellites
+            };
         }
 
         public void Dispose()

@@ -47,8 +47,8 @@
             this.lblKamikazeStatus = new System.Windows.Forms.Label();
             this.label14 = new System.Windows.Forms.Label();
             this.groupBox6 = new System.Windows.Forms.GroupBox();
-            this.button2 = new System.Windows.Forms.Button();
-            this.button1 = new System.Windows.Forms.Button();
+            this.btnRtl = new System.Windows.Forms.Button();
+            this.btnLoiter = new System.Windows.Forms.Button();
             this.btnAutonomousLanding = new System.Windows.Forms.Button();
             this.btnAutonomousFlight = new System.Windows.Forms.Button();
             this.btnFinishLock = new System.Windows.Forms.Button();
@@ -307,8 +307,8 @@
             // 
             // groupBox6
             // 
-            this.groupBox6.Controls.Add(this.button2);
-            this.groupBox6.Controls.Add(this.button1);
+            this.groupBox6.Controls.Add(this.btnRtl);
+            this.groupBox6.Controls.Add(this.btnLoiter);
             this.groupBox6.Controls.Add(this.btnAutonomousLanding);
             this.groupBox6.Controls.Add(this.btnAutonomousFlight);
             this.groupBox6.Controls.Add(this.btnFinishLock);
@@ -328,34 +328,35 @@
             this.groupBox6.TabStop = false;
             this.groupBox6.Text = "Komutlar";
             // 
-            // button2
+            // btnRtl
             // 
-            this.button2.BackColor = System.Drawing.Color.Black;
-            this.button2.FlatAppearance.BorderColor = System.Drawing.SystemColors.ControlDarkDark;
-            this.button2.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.button2.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(162)));
-            this.button2.ForeColor = System.Drawing.Color.LightSeaGreen;
-            this.button2.Location = new System.Drawing.Point(276, 141);
-            this.button2.Name = "button2";
-            this.button2.Size = new System.Drawing.Size(226, 41);
-            this.button2.TabIndex = 12;
-            this.button2.Text = "RTL";
-            this.button2.UseVisualStyleBackColor = false;
+            this.btnRtl.BackColor = System.Drawing.Color.Black;
+            this.btnRtl.FlatAppearance.BorderColor = System.Drawing.SystemColors.ControlDarkDark;
+            this.btnRtl.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+            this.btnRtl.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(162)));
+            this.btnRtl.ForeColor = System.Drawing.Color.LightSeaGreen;
+            this.btnRtl.Location = new System.Drawing.Point(276, 141);
+            this.btnRtl.Name = "btnRtl";
+            this.btnRtl.Size = new System.Drawing.Size(226, 41);
+            this.btnRtl.TabIndex = 12;
+            this.btnRtl.Text = "Otonom Uçuş";
+            this.btnRtl.UseVisualStyleBackColor = false;
+            this.btnRtl.Click += new System.EventHandler(this.btnRtl_Click);
             // 
-            // button1
+            // btnLoiter
             // 
-            this.button1.BackColor = System.Drawing.Color.Black;
-            this.button1.FlatAppearance.BorderColor = System.Drawing.SystemColors.ControlDarkDark;
-            this.button1.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
-            this.button1.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(162)));
-            this.button1.ForeColor = System.Drawing.Color.LightSeaGreen;
-            this.button1.Location = new System.Drawing.Point(16, 141);
-            this.button1.Name = "button1";
-            this.button1.Size = new System.Drawing.Size(226, 41);
-            this.button1.TabIndex = 11;
-            this.button1.Text = "Loiter";
-            this.button1.UseVisualStyleBackColor = false;
-            this.button1.Click += new System.EventHandler(this.button1_Click);
+            this.btnLoiter.BackColor = System.Drawing.Color.Black;
+            this.btnLoiter.FlatAppearance.BorderColor = System.Drawing.SystemColors.ControlDarkDark;
+            this.btnLoiter.FlatStyle = System.Windows.Forms.FlatStyle.Flat;
+            this.btnLoiter.Font = new System.Drawing.Font("Microsoft Sans Serif", 12F, System.Drawing.FontStyle.Bold, System.Drawing.GraphicsUnit.Point, ((byte)(162)));
+            this.btnLoiter.ForeColor = System.Drawing.Color.LightSeaGreen;
+            this.btnLoiter.Location = new System.Drawing.Point(16, 141);
+            this.btnLoiter.Name = "btnLoiter";
+            this.btnLoiter.Size = new System.Drawing.Size(226, 41);
+            this.btnLoiter.TabIndex = 11;
+            this.btnLoiter.Text = "Loiter";
+            this.btnLoiter.UseVisualStyleBackColor = false;
+            this.btnLoiter.Click += new System.EventHandler(this.btnLoiter_Click);
             // 
             // btnAutonomousLanding
             // 
@@ -1154,8 +1155,8 @@
         private GMap.NET.WindowsForms.GMapControl gMapControl1;
         private System.Windows.Forms.PictureBox pictureBox2;
         private System.Windows.Forms.Label lblServerTelemetryStatus;
-        private System.Windows.Forms.Button button1;
-        private System.Windows.Forms.Button button2;
+        private System.Windows.Forms.Button btnLoiter;
+        private System.Windows.Forms.Button btnRtl;
     }
 }
 

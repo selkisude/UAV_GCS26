@@ -35,9 +35,13 @@ namespace UAV_GCS
 
         private const uint ARDUPLANE_MODE_AUTO = 10;
         private const uint ARDUPLANE_MODE_RTL = 11;
+        private const uint ARDUPLANE_MODE_LOITER = 12;
+        private const uint ARDUPLANE_MODE_TAKEOFF = 13;
         private const uint ARDUPLANE_MODE_GUIDED = 15;
+        private const uint ARDUPLANE_MODE_QLAND = 23;
 
         private const ushort MAV_CMD_DO_SET_MODE = 176;
+        private const ushort MAV_CMD_NAV_TAKEOFF = 22;
         private const byte MAV_MODE_FLAG_CUSTOM_MODE_ENABLED = 1;
 
         private const byte MAVLINK_STX = 0xFE;
@@ -62,11 +66,39 @@ namespace UAV_GCS
             SendSetModeCommand(ARDUPLANE_MODE_RTL, "RTL");
         }
 
-        public void SetModeAutonomousLanding()
+        public void SetModeLand()
         {
-            // Sabit kanat sistemde en güvenli varsayılan: RTL.
-            // Eğer takımınız görev planında AUTO landing kullanacaksa burayı AUTO yapabiliriz.
-            SendSetModeCommand(ARDUPLANE_MODE_RTL, "RTL / OTONOM İNİŞ");
+            SendSetModeCommand(ARDUPLANE_MODE_QLAND, "QLAND / OTONOM İNİŞ");
+        }
+
+        
+        public void SetModeLoiter()
+        {
+            SendSetModeCommand(ARDUPLANE_MODE_LOITER, "LOITER");
+        }
+
+        public void SendTakeoffCommand(float altitudeMeters)
+        {
+            if (!IsConnected)
+                throw new InvalidOperationException("MAVLink bağlantısı yok.");
+
+            byte[] packet = BuildCommandLongPacket(
+                targetSystem: _targetSystemId,
+                targetComponent: _targetComponentId,
+                command: MAV_CMD_NAV_TAKEOFF,
+                confirmation: 0,
+                param1: 0,
+                param2: 0,
+                param3: 0,
+                param4: float.NaN,
+                param5: 0,
+                param6: 0,
+                param7: altitudeMeters
+            );
+
+            SendMavlinkPacket(packet);
+
+            LogRequested?.Invoke($"TAKEOFF komutu gönderildi. Hedef irtifa: {altitudeMeters:0} m");
         }
 
         public void ConnectUdp(int listenPort)
@@ -619,6 +651,8 @@ namespace UAV_GCS
                     return "RTL";
                 case 12:
                     return "LOITER";
+                case 13:
+                    return "TAKEOFF";
                 case 15:
                     return "GUIDED";
                 case 20:
@@ -631,6 +665,8 @@ namespace UAV_GCS
                     return "QLAND";
                 case 24:
                     return "QRTL";
+                case 25:
+                    return "LOITER_TO_QLAND";
                 default:
                     return "MODE " + customMode;
             }

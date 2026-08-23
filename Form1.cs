@@ -1,8 +1,10 @@
 ﻿using GMap.NET;
 using GMap.NET.MapProviders;
 using GMap.NET.WindowsForms;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Drawing;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -23,9 +25,8 @@ namespace UAV_GCS
 
         private const int MAVLINK_UDP_PORT = 14552;
 
-        private const string JETSON_IP = "192.168.137.170";
-
-        private const string CAMERA_STREAM_URL = "rtsp://192.168.137.170:8554/live";
+        private const string JETSON_IP = "192.168.1.50";
+        private const string CAMERA_STREAM_URL = "rtsp://192.168.1.50:8554/stream";
 
 
         private DateTime _lastMapUpdateTime = DateTime.MinValue; //harita güncelleme zamanını takip etmek için
@@ -50,6 +51,27 @@ namespace UAV_GCS
         private DateTime _lastLockSentTime = DateTime.MinValue;
         private string _lastLockMessage = "";
 
+        private Timer _serverMapDataTimer;
+        private bool _isLoadingServerMapData = false;
+
+        private string _lastHssSignature = "";
+
+        private EventTimeDto _kamikazeStartTime;
+        private bool _isKamikazeActive = false;
+        private DateTime _lastKamikazeSentTime = DateTime.MinValue;
+
+        private bool _isDogfightActive = false;
+
+        private double _qrLatitude = 0;
+        private double _qrLongitude = 0;
+        private bool _hasQrCoordinate = false;
+
+        private TelemetryData _lastCubeTelemetry;
+        private TelemetryData _lastJetsonTelemetry;
+
+        private DateTime _lastCubeTelemetryTime = DateTime.MinValue;
+        private DateTime _lastJetsonTelemetryTime = DateTime.MinValue;
+
         public Form1()
         {
             InitializeComponent(); //desindaki komponentleri başlatır
@@ -68,6 +90,8 @@ namespace UAV_GCS
             _jetsonClient.LockReceived += OnJetsonLockReceived;
             _jetsonClient.TargetErrorXReceived += OnJetsonTargetErrorXReceived;
             _jetsonClient.TargetErrorYReceived += OnJetsonTargetErrorYReceived;
+            _jetsonClient.KamikazeReceived += OnJetsonKamikazeReceived;
+            _jetsonClient.TelemetryReceived += OnJetsonTelemetryReceived;
             _ = TryConnectJetsonAsync();
 
             _cameraManager = new CameraManager(tableLayoutPanel9, 0, 0); //kamera streamini göstermek için CameraManager başlatılır
@@ -93,6 +117,7 @@ namespace UAV_GCS
 
             InitializeServerTelemetryTimer(); //yarışma sunucusuna telemetri göndermek için 1 Hz timer başlatır
             InitializeJetsonServerTimeTimer();
+            InitializeServerMapDataTimer();
 
 
             TryConnectMavlinkUdp(); // MAVLink UDP bağlantısı başlatır. MAVProxy üzerinden gelen MAVLink verisi dinlenir.
@@ -112,6 +137,128 @@ namespace UAV_GCS
             _jetsonServerTimeTimer.Interval = 100; // 10 Hz
             _jetsonServerTimeTimer.Tick += JetsonServerTimeTimer_Tick;
         }
+
+        private void InitializeServerMapDataTimer()
+        {
+            _serverMapDataTimer = new Timer();
+            _serverMapDataTimer.Interval = 1000; // 1 Hz
+            _serverMapDataTimer.Tick += ServerMapDataTimer_Tick;
+        }
+
+        private string ExtractQrTextFromHitPacket(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return "";
+
+            try
+            {
+                JObject obj = JObject.Parse(message);
+
+                return
+                    obj["qr_text"]?.ToString() ??
+                    obj["qrMetni"]?.ToString() ??
+                    obj["qr"]?.ToString() ??
+                    "";
+            }
+            catch
+            {
+                return message.Trim();
+            }
+        }
+
+        private EventTimeDto ExtractDiveEndTimeFromHitPacket(string message)
+        {
+            try
+            {
+                JObject obj = JObject.Parse(message);
+
+                string timeText = obj["dive_end_time_str"]?.ToString();
+
+                if (!string.IsNullOrWhiteSpace(timeText))
+                {
+                    string[] mainParts = timeText.Split('.');
+                    string[] hms = mainParts[0].Split(':');
+
+                    int hour = int.Parse(hms[0]);
+                    int minute = int.Parse(hms[1]);
+                    int second = int.Parse(hms[2]);
+
+                    int millisecond = 0;
+                    if (mainParts.Length > 1)
+                        millisecond = int.Parse(mainParts[1].PadRight(3, '0').Substring(0, 3));
+
+                    return new EventTimeDto
+                    {
+                        saat = hour,
+                        dakika = minute,
+                        saniye = second,
+                        milisaniye = millisecond
+                    };
+                }
+            }
+            catch
+            {
+                // Parse edilemezse mevcut sunucu zamanını kullanacağız.
+            }
+
+            return _timeSyncManager.GetCurrentEventTimeDto();
+        }
+        private async void OnJetsonKamikazeReceived(string message)
+        {
+            AddLog("Jetson kamikaze hit packet aldı: " + message);
+
+            if (!IsServerConnected())
+            {
+                AddLog("Kamikaze bilgisi gönderilemedi: Sunucu bağlantısı yok.");
+                return;
+            }
+
+            if (!_isKamikazeActive)
+            {
+                AddLog("Kamikaze hit packet geldi ama aktif kamikaze görevi yok. Paket gönderilmedi.");
+                return;
+            }
+
+            if ((DateTime.Now - _lastKamikazeSentTime).TotalSeconds < 5)
+            {
+                AddLog("Kamikaze hit packet tekrar geldi, sunucuya yeniden gönderilmedi.");
+                return;
+            }
+
+            try
+            {
+                string qrText = ExtractQrTextFromHitPacket(message);
+
+                if (string.IsNullOrWhiteSpace(qrText))
+                {
+                    AddLog("Kamikaze bilgisi gönderilemedi: QR metni boş.");
+                    return;
+                }
+
+                var kamikazeInfo = new KamikazeInfoRequestDto
+                {
+                    kamikazeBaslangicZamani = _kamikazeStartTime,
+                    kamikazeBitisZamani = ExtractDiveEndTimeFromHitPacket(message),
+                    qrMetni = qrText
+                };
+
+                await _competitionApiClient.SendKamikazeInfoAsync(kamikazeInfo);
+
+                _lastKamikazeSentTime = DateTime.Now;
+                _isKamikazeActive = false;
+
+                lblKamikazeStatus.Text = "Kamikaze tamamlandı";
+                lblKamikazeStatus.ForeColor = Color.Lime;
+
+                AddLog("Kamikaze bilgisi yarışma sunucusuna gönderildi.");
+            }
+            catch (Exception ex)
+            {
+                AddLog("Kamikaze bilgisi gönderilemedi: " + ex.Message);
+            }
+        }
+
+        
 
         private void OnJetsonTargetErrorXReceived(double value)
         {
@@ -135,6 +282,26 @@ namespace UAV_GCS
             AddLog($"Jetson hedef sapması | X: {_lastTargetErrorX:0.00}, Y: {_lastTargetErrorY:0.00}");
         }
 
+        private async void ServerMapDataTimer_Tick(object sender, EventArgs e)
+        {
+            if (_isLoadingServerMapData)
+                return;
+
+            if (!IsServerConnected())
+                return;
+
+            _isLoadingServerMapData = true;
+
+            try
+            {
+                await LoadServerMapDataAsync();
+            }
+            finally
+            {
+                _isLoadingServerMapData = false;
+            }
+        }
+
         private async void JetsonServerTimeTimer_Tick(object sender, EventArgs e)
         {
             if (_isSendingServerTimeToJetson)
@@ -156,6 +323,10 @@ namespace UAV_GCS
                     $"{serverNow.Hour:00}:{serverNow.Minute:00}:{serverNow.Second:00}.{serverNow.Millisecond:000}";
 
                 await _jetsonClient.SendServerTimeAsync(timeText);
+
+                double serverTimeMs = new DateTimeOffset(serverNow).ToUnixTimeMilliseconds();
+
+                await _jetsonClient.SendServerTimeMsAsync(serverTimeMs);
             }
             catch (Exception ex)
             {
@@ -235,10 +406,31 @@ namespace UAV_GCS
             return nearestEnemy;
         }
 
+        private string BuildHssSignature(System.Collections.Generic.List<HssInfoDto> hssAreas)
+        {
+            if (hssAreas == null || hssAreas.Count == 0)
+                return "";
+
+            var ordered = hssAreas
+                .OrderBy(hss => hss.id)
+                .Select(hss =>
+                    $"{hss.id}|" +
+                    $"{hss.hssEnlem:0.0000000}|" +
+                    $"{hss.hssBoylam:0.0000000}|" +
+                    $"{hss.hssYaricap:0.00}"
+                );
+
+            return string.Join(";", ordered);
+        }
+
+        
         private async Task SendNearestEnemyToJetsonAsync(
     TelemetryData ownTelemetry,
     System.Collections.Generic.List<EnemyUavDto> enemies)
         {
+            if (!_isDogfightActive)
+                return;
+
             if (_jetsonClient == null || !_jetsonClient.IsConnected)
                 return;
 
@@ -351,10 +543,9 @@ namespace UAV_GCS
             if (_competitionApiClient == null || !_competitionApiClient.IsLoggedIn)
                 return;
 
-            if (_lastTelemetryForServer == null)
-                return;
+            TelemetryData telemetryForServer = GetBestTelemetryForServer();
 
-            if (!IsValidTelemetryForServer(_lastTelemetryForServer))
+            if (telemetryForServer == null)
                 return;
 
             _isSendingTelemetryToServer = true;
@@ -362,7 +553,7 @@ namespace UAV_GCS
             try
             {
                 TelemetryRequestDto request =
-                    _telemetryRequestBuilder.Build(_lastTelemetryForServer, _competitionApiClient.TeamNumber);
+                    _telemetryRequestBuilder.Build(telemetryForServer, _competitionApiClient.TeamNumber);
 
                 TelemetryResponseDto response =
                     await _competitionApiClient.SendTelemetryAsync(request);
@@ -383,7 +574,7 @@ namespace UAV_GCS
                     _mapVehicleManager.UpdateEnemyUavs(response.konumBilgileri);
 
                     await SendNearestEnemyToJetsonAsync(
-                        _lastTelemetryForServer,
+                        telemetryForServer,
                         response.konumBilgileri
                     );
                 }
@@ -410,32 +601,6 @@ namespace UAV_GCS
 
 
 
-        // Yarışma sunucusuna gönderilecek telemetri verisinin geçerli olup olmadığını kontrol eder
-        private bool IsValidTelemetryForServer(TelemetryData telemetry)
-        {
-            if (telemetry == null)
-                return false;
-
-            if (!IsMavlinkConnected())
-                return false;
-
-            if (!telemetry.HasGpsFix)
-                return false;
-
-            if (telemetry.Latitude == 0 && telemetry.Longitude == 0)
-                return false;
-
-            if (telemetry.Latitude < -90 || telemetry.Latitude > 90)
-                return false;
-
-            if (telemetry.Longitude < -180 || telemetry.Longitude > 180)
-                return false;
-
-            if (double.IsNaN(telemetry.Latitude) || double.IsNaN(telemetry.Longitude))
-                return false;
-
-            return true;
-        }
 
         private void OnCameraConnectionChanged(bool isConnected)
         {
@@ -471,6 +636,8 @@ namespace UAV_GCS
             if (telemetry == null)
                 return;
 
+            _lastCubeTelemetry = telemetry;
+            _lastCubeTelemetryTime = DateTime.Now;
             _lastTelemetryForServer = telemetry;
 
             SafeUi(() =>
@@ -517,6 +684,104 @@ namespace UAV_GCS
             });
         }
 
+        private void OnJetsonTelemetryReceived(TelemetryData telemetry)
+        {
+            if (telemetry == null)
+                return;
+
+            _lastJetsonTelemetry = telemetry;
+            _lastJetsonTelemetryTime = DateTime.Now;
+
+            // Cube telemetrisi tazeyse UI'yi Cube yönetsin.
+            if (IsCubeTelemetryFresh())
+                return;
+
+            _lastTelemetryForServer = telemetry;
+
+            SafeUi(() =>
+            {
+                lblFlightMode.Text = string.IsNullOrWhiteSpace(telemetry.FlightMode)
+                    ? "JETSON"
+                    : telemetry.FlightMode + " / JETSON";
+
+                lblSpeed.Text = telemetry.GroundSpeed >= 0
+                    ? telemetry.GroundSpeed.ToString("0.00")
+                    : "--";
+
+                lblAltitude.Text = telemetry.RelativeAltitudeMeters >= 0
+                    ? telemetry.RelativeAltitudeMeters.ToString("0.00")
+                    : "--";
+
+                lblBattery.Text = telemetry.BatteryPercent >= 0
+                    ? "%" + telemetry.BatteryPercent.ToString("0")
+                    : "%--";
+
+                SetStatus(
+                    lblGpsStatus,
+                    telemetry.HasGpsFix ? $"FIX / JETSON ({telemetry.SatellitesVisible})" : "NO FIX / JETSON",
+                    telemetry.HasGpsFix
+                );
+
+                if ((DateTime.Now - _lastMapUpdateTime).TotalMilliseconds > 1000)
+                {
+                    _lastMapUpdateTime = DateTime.Now;
+                    _mapVehicleManager.UpdateOwnUav(telemetry);
+                }
+            });
+        }
+
+        private bool IsCubeTelemetryFresh()
+        {
+            return _lastCubeTelemetry != null &&
+                   (DateTime.Now - _lastCubeTelemetryTime).TotalSeconds <= 2;
+        }
+
+        private bool IsJetsonTelemetryFresh()
+        {
+            return _lastJetsonTelemetry != null &&
+                   (DateTime.Now - _lastJetsonTelemetryTime).TotalSeconds <= 2;
+        }
+
+        private TelemetryData GetBestTelemetryForServer()
+        {
+            if (IsValidTelemetryValues(_lastCubeTelemetry) && IsCubeTelemetryFresh())
+                return _lastCubeTelemetry;
+
+            if (IsValidTelemetryValues(_lastJetsonTelemetry) && IsJetsonTelemetryFresh())
+                return _lastJetsonTelemetry;
+
+            return null;
+        }
+
+        private bool IsValidTelemetryValues(TelemetryData telemetry)
+        {
+            if (telemetry == null)
+                return false;
+
+            if (!telemetry.HasGpsFix)
+                return false;
+
+            if (telemetry.Latitude == 0 && telemetry.Longitude == 0)
+                return false;
+
+            if (telemetry.Latitude < -90 || telemetry.Latitude > 90)
+                return false;
+
+            if (telemetry.Longitude < -180 || telemetry.Longitude > 180)
+                return false;
+
+            if (double.IsNaN(telemetry.Latitude) || double.IsNaN(telemetry.Longitude))
+                return false;
+
+            return true;
+        }
+
+
+
+        private bool IsValidTelemetryForServer(TelemetryData telemetry)
+        {
+            return IsValidTelemetryValues(telemetry);
+        }
         private void TryConnectMavlinkUdp()
         {
             try
@@ -669,13 +934,35 @@ namespace UAV_GCS
 
                 if (data.Hss?.hss_koordinat_bilgileri != null)
                 {
-                    _boundaryManager.DrawHssAreasFromServer(data.Hss.hss_koordinat_bilgileri);
-                    AddLog($"HSS koordinatları yüklendi. Alan sayısı: {data.Hss.hss_koordinat_bilgileri.Count}");
+                    string currentHssSignature = BuildHssSignature(data.Hss.hss_koordinat_bilgileri);
+
+                    if (currentHssSignature != _lastHssSignature)
+                    {
+                        _lastHssSignature = currentHssSignature;
+
+                        _boundaryManager.DrawHssAreasFromServer(data.Hss.hss_koordinat_bilgileri);
+
+                        AddLog($"HSS koordinatları güncellendi. Alan sayısı: {data.Hss.hss_koordinat_bilgileri.Count}");
+
+                        if (_jetsonClient != null && _jetsonClient.IsConnected)
+                        {
+                            await _jetsonClient.SendHssAreasAsync(data.Hss.hss_koordinat_bilgileri);
+                        }
+                        else
+                        {
+                            AddLog("HSS koordinatları Jetson'a gönderilemedi: Jetson bağlantısı yok.");
+                        }
+                    }
                 }
 
-                if (data.Qr != null)
+                if (data.Qr != null && !_hasQrCoordinate)
                 {
+                    _qrLatitude = data.Qr.qrEnlem;
+                    _qrLongitude = data.Qr.qrBoylam;
+                    _hasQrCoordinate = true;
+
                     _mapVehicleManager.UpdateQrTarget(data.Qr.qrEnlem, data.Qr.qrBoylam);
+
                     AddLog($"QR hedef koordinatı alındı: {data.Qr.qrEnlem:0.000000}, {data.Qr.qrBoylam:0.000000}");
                 }
 
@@ -776,6 +1063,9 @@ namespace UAV_GCS
 
                 await LoadServerMapDataAsync();
 
+                _serverMapDataTimer.Start();
+                AddLog("Sunucu HSS/QR güncelleme timer'ı başlatıldı. Frekans: 1 Hz");
+
                 _telemetrySuccessCount = 0;
                 _telemetryFailCount = 0;
                 _lastTelemetrySentTime = DateTime.MinValue;
@@ -801,49 +1091,26 @@ namespace UAV_GCS
             }
         }
 
-        private void btnAutonomousLanding_Click(object sender, EventArgs e)
+        private async void btnAutonomousLanding_Click(object sender, EventArgs e)
         {
-            if (!IsMavlinkConnected())
-            {
-                ShowMavlinkNotConnectedMessage("Otonom iniş");
-                return;
-            }
-
-            try
-            {
-                _mavlinkManager.SetModeAutonomousLanding();
-                AddLog("Otonom iniş için RTL komutu gönderildi.");
-            }
-            catch (Exception ex)
-            {
-                AddLog("Otonom iniş komutu gönderilemedi: " + ex.Message);
-                MessageBox.Show("Otonom iniş komutu gönderilemedi:\n" + ex.Message);
-            }
+            await SendCommandCubeFirstThenJetsonAsync(
+                "Otonom iniş",
+                () => _mavlinkManager.SetModeLand(),
+                "OTONOM_INIS",
+                "Otonom iniş için QLAND komutu MAVLink üzerinden Cube'a gönderildi.",
+                "Cube'a ulaşılamadığı için OTONOM_INIS komutu Jetson'a gönderildi."
+            );
         }
 
         private async void btnAutonomousFlight_Click(object sender, EventArgs e)
         {
-            if (!IsMavlinkConnected())
-            {
-                ShowMavlinkNotConnectedMessage("Otonom uçuş");
-                return;
-            }
-
-            try
-            {
-                _mavlinkManager.SetModeAuto();
-                AddLog("Otonom uçuş için AUTO mod komutu gönderildi.");
-
-                if (_jetsonClient != null && _jetsonClient.IsConnected)
-                {
-                    await _jetsonClient.SendUiCommandAsync("OTONOM_UCUS");
-                }
-            }
-            catch (Exception ex)
-            {
-                AddLog("Otonom uçuş komutu gönderilemedi: " + ex.Message);
-                MessageBox.Show("Otonom uçuş komutu gönderilemedi:\n" + ex.Message);
-            }
+            await SendCommandCubeFirstThenJetsonAsync(
+                "Otonom kalkış",
+                () => _mavlinkManager.SendTakeoffCommand(100.0f),
+                "OTONOM_KALKIS",
+                "Otonom kalkış için TAKEOFF komutu MAVLink üzerinden Cube'a gönderildi. İrtifa: 100 m",
+                "Cube'a ulaşılamadığı için OTONOM_KALKIS komutu Jetson'a gönderildi."
+            );
         }
 
         private async void btnStartKamikaze_Click(object sender, EventArgs e)
@@ -856,8 +1123,31 @@ namespace UAV_GCS
                     return;
                 }
 
+                if (_timeSyncManager == null || !_timeSyncManager.IsSynced)
+                {
+                    AddLog("Kamikaze başlatılamadı: Sunucu saati senkron değil.");
+                    return;
+                }
+
+                if (!_hasQrCoordinate)
+                {
+                    AddLog("Kamikaze başlatılamadı: QR hedef koordinatı yok.");
+                    return;
+                }
+
+                await _jetsonClient.SendTargetAsync(_qrLatitude, _qrLongitude, 100.0);
+                AddLog($"Kamikaze hedef koordinatı Jetson'a gönderildi. Lat: {_qrLatitude:0.000000}, Lon: {_qrLongitude:0.000000}");
+
                 await _jetsonClient.SendUiCommandAsync("ENGAGE_KAMIKAZE");
+
+                _kamikazeStartTime = _timeSyncManager.GetCurrentEventTimeDto();
+                _isKamikazeActive = true;
+
+                lblKamikazeStatus.Text = "Kamikaze aktif";
+                lblKamikazeStatus.ForeColor = Color.Lime;
+
                 AddLog("Kamikaze başlatma komutu Jetson'a gönderildi.");
+                AddLog("Kamikaze başlangıç zamanı kaydedildi.");
             }
             catch (Exception ex)
             {
@@ -877,6 +1167,10 @@ namespace UAV_GCS
                 }
 
                 await _jetsonClient.SendUiCommandAsync("ABORT");
+                _isKamikazeActive = false;
+
+                lblKamikazeStatus.Text = "Kamikaze iptal edildi";
+                lblKamikazeStatus.ForeColor = Color.OrangeRed;
                 AddLog("Kamikaze iptal / ABORT komutu Jetson'a gönderildi.");
             }
             catch (Exception ex)
@@ -896,7 +1190,9 @@ namespace UAV_GCS
                 }
 
                 await _jetsonClient.SendUiCommandAsync("ENGAGE_DOGFIGHT");
+                _isDogfightActive = true;
                 AddLog("Dogfight başlatma komutu Jetson'a gönderildi.");
+                AddLog("Dogfight hedef aktarımı başlatıldı.");
             }
             catch (Exception ex)
             {
@@ -915,7 +1211,10 @@ namespace UAV_GCS
                 }
 
                 await _jetsonClient.SendUiCommandAsync("ABORT");
+                _isDogfightActive = false;
+
                 AddLog("Görev iptal / ABORT komutu Jetson'a gönderildi.");
+                AddLog("Dogfight hedef aktarımı durduruldu.");
             }
             catch (Exception ex)
             {
@@ -925,23 +1224,6 @@ namespace UAV_GCS
 
         private async void btnFailSafe_Click(object sender, EventArgs e)
         {
-            bool mavlinkConnected = IsMavlinkConnected();
-            bool jetsonConnected = _jetsonClient != null && _jetsonClient.IsConnected;
-
-            if (!mavlinkConnected && !jetsonConnected)
-            {
-                AddLog("Fail Safe komutu gönderilemedi. MAVLink ve Jetson bağlantısı yok.");
-
-                MessageBox.Show(
-                    "Fail Safe komutu gönderilemedi.\nMAVLink ve Jetson bağlantısı yok.",
-                    "Bağlantı Yok",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Warning
-                );
-
-                return;
-            }
-
             DialogResult result = MessageBox.Show(
                 "Fail Safe komutu gönderilecek. Emin misin?",
                 "Fail Safe Onayı",
@@ -955,34 +1237,82 @@ namespace UAV_GCS
                 return;
             }
 
-            try
+            await SendCommandCubeFirstThenJetsonAsync(
+                "Fail Safe",
+                () => _mavlinkManager.SetModeRtl(),
+                "FAIL_SAFE",
+                "Fail Safe / RTL komutu MAVLink üzerinden Cube'a gönderildi.",
+                "Cube'a ulaşılamadığı için FAIL_SAFE komutu Jetson'a gönderildi."
+            );
+        }
+
+        private async Task SendCommandCubeFirstThenJetsonAsync(
+    string commandName,
+    Action cubeCommand,
+    string jetsonCommand,
+    string cubeSuccessLog,
+    string jetsonFallbackLog)
+        {
+            bool cubeTried = false;
+
+            if (IsMavlinkConnected())
             {
-                if (mavlinkConnected)
+                try
                 {
-                    _mavlinkManager.SetModeRtl();
-                    AddLog("Fail Safe / RTL komutu MAVLink üzerinden Cube'a gönderildi.");
+                    cubeTried = true;
+                    cubeCommand.Invoke();
+
+                    AddLog(cubeSuccessLog);
                     return;
                 }
-
-                if (jetsonConnected)
+                catch (Exception ex)
                 {
-                    await _jetsonClient.SendUiCommandAsync("FAIL_SAFE");
-                    AddLog("MAVLink bağlantısı olmadığı için Fail Safe komutu Jetson'a gönderildi.");
+                    AddLog($"{commandName} komutu Cube'a gönderilemedi: {ex.Message}");
                 }
             }
-            catch (Exception ex)
+            else
             {
-                AddLog("Fail Safe komutu gönderilemedi: " + ex.Message);
-                MessageBox.Show("Fail Safe komutu gönderilemedi:\n" + ex.Message);
+                AddLog($"{commandName}: MAVLink bağlantısı yok. Jetson fallback deneniyor.");
             }
+
+            if (_jetsonClient != null && _jetsonClient.IsConnected)
+            {
+                try
+                {
+                    await _jetsonClient.SendUiCommandAsync(jetsonCommand);
+                    AddLog(jetsonFallbackLog);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    AddLog($"{commandName} komutu Jetson'a gönderilemedi: {ex.Message}");
+                }
+            }
+
+            string reason = cubeTried
+                ? "Cube komutu başarısız oldu ve Jetson'a da komut gönderilemedi."
+                : "MAVLink bağlantısı yok ve Jetson'a da komut gönderilemedi.";
+
+            AddLog($"{commandName} komutu gönderilemedi. {reason}");
+
+            MessageBox.Show(
+                $"{commandName} komutu gönderilemedi.\n{reason}",
+                "Komut Gönderilemedi",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning
+            );
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             _serverTelemetryTimer?.Stop();
             _serverTelemetryTimer?.Dispose();
+
             _jetsonServerTimeTimer?.Stop();
             _jetsonServerTimeTimer?.Dispose();
+
+            _serverMapDataTimer?.Stop();
+            _serverMapDataTimer?.Dispose();
 
             _cameraManager?.Dispose();
             _mavlinkManager?.Dispose();
@@ -993,14 +1323,31 @@ namespace UAV_GCS
             base.OnFormClosing(e);
         }
 
-        private void button1_Click(object sender, EventArgs e)
+        private async void btnLoiter_Click(object sender, EventArgs e)
         {
-
+            await SendCommandCubeFirstThenJetsonAsync(
+                "Loiter",
+                () => _mavlinkManager.SetModeLoiter(),
+                "LOITER",
+                "LOITER mod komutu MAVLink üzerinden Cube'a gönderildi.",
+                "Cube'a ulaşılamadığı için LOITER komutu Jetson'a gönderildi."
+            );
         }
 
         private void tableLayoutPanel11_Paint(object sender, PaintEventArgs e)
         {
 
+        }
+
+        private async void btnRtl_Click(object sender, EventArgs e)
+        {
+            await SendCommandCubeFirstThenJetsonAsync(
+                "Otonom uçuş",
+                () => _mavlinkManager.SetModeAuto(),
+                "OTONOM_UCUS",
+                "Otonom uçuş için AUTO mod komutu MAVLink üzerinden Cube'a gönderildi.",
+                "Cube'a ulaşılamadığı için OTONOM_UCUS komutu Jetson'a gönderildi."
+            );
         }
     }
 }
