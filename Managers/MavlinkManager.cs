@@ -51,6 +51,8 @@ namespace UAV_GCS
         private const byte MSG_ID_COMMAND_LONG = 76;
         private const byte CRC_EXTRA_COMMAND_LONG = 152;
 
+        private const uint MSG_ID_ATTITUDE = 30;
+
         public void SetModeAuto()
         {
             SendSetModeCommand(ARDUPLANE_MODE_AUTO, "AUTO");
@@ -323,6 +325,14 @@ namespace UAV_GCS
             );
         }
 
+        private void ProcessAttitude(MAVLink.MAVLinkMessage packet)
+        {
+            MAVLink.mavlink_attitude_t attitude =
+                (MAVLink.mavlink_attitude_t)packet.data;
+
+            _latestTelemetry.RollDegree = attitude.roll * 180.0 / Math.PI;
+            _latestTelemetry.PitchDegree = attitude.pitch * 180.0 / Math.PI;
+        }
         private TelemetryData _latestTelemetry = new TelemetryData
         {
             TeamId = 0,
@@ -508,6 +518,11 @@ namespace UAV_GCS
                         telemetryChanged = true;
                         break;
 
+                    case MSG_ID_ATTITUDE:
+                        ProcessAttitude(packet);
+                        telemetryChanged = true;
+                        break;
+
                     default:
                         return;
                 }
@@ -619,6 +634,32 @@ namespace UAV_GCS
 
             _latestTelemetry.HasGpsFix = gps.fix_type >= 3;
             _latestTelemetry.SatellitesVisible = gps.satellites_visible;
+
+            EventTimeDto gpsTime = ConvertGpsTimeUsecToEventTime(gps.time_usec);
+
+            if (gpsTime != null)
+                _latestTelemetry.GpsTime = gpsTime;
+        }
+
+        private EventTimeDto ConvertGpsTimeUsecToEventTime(ulong timeUsec)
+        {
+            // MAVLink GPS_RAW_INT time_usec bazen Unix epoch, bazen boot time olabilir.
+            // 2000 yılından küçükse gerçek UTC saymayalım.
+            if (timeUsec < 946684800000000UL)
+                return null;
+
+            DateTimeOffset gpsDateTime =
+                DateTimeOffset.FromUnixTimeMilliseconds((long)(timeUsec / 1000));
+
+            DateTime utc = gpsDateTime.UtcDateTime;
+
+            return new EventTimeDto
+            {
+                saat = utc.Hour,
+                dakika = utc.Minute,
+                saniye = utc.Second,
+                milisaniye = utc.Millisecond
+            };
         }
 
         private string DecodeFlightMode(uint customMode)
@@ -687,7 +728,15 @@ namespace UAV_GCS
                 FlightMode = data.FlightMode,
                 HasGpsFix = data.HasGpsFix,
                 SatellitesVisible = data.SatellitesVisible,
-                HeadingDegree = data.HeadingDegree
+                HeadingDegree = data.HeadingDegree,
+                PitchDegree = data.PitchDegree,
+                RollDegree = data.RollDegree,
+                GpsTime = data.GpsTime,
+                IsTrackingTarget = data.IsTrackingTarget,
+                TargetCenterX = data.TargetCenterX,
+                TargetCenterY = data.TargetCenterY,
+                TargetWidth = data.TargetWidth,
+                TargetHeight = data.TargetHeight,
             };
         }
 

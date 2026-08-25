@@ -72,6 +72,11 @@ namespace UAV_GCS
         private DateTime _lastCubeTelemetryTime = DateTime.MinValue;
         private DateTime _lastJetsonTelemetryTime = DateTime.MinValue;
 
+        private TargetBoxData _lastTargetBox;
+        private DateTime _lastTargetBoxTime = DateTime.MinValue;
+
+        private bool _isFailSafeActive = false;
+
         public Form1()
         {
             InitializeComponent(); //desindaki komponentleri başlatır
@@ -92,6 +97,7 @@ namespace UAV_GCS
             _jetsonClient.TargetErrorYReceived += OnJetsonTargetErrorYReceived;
             _jetsonClient.KamikazeReceived += OnJetsonKamikazeReceived;
             _jetsonClient.TelemetryReceived += OnJetsonTelemetryReceived;
+            _jetsonClient.TargetBoxReceived += OnJetsonTargetBoxReceived;
             _ = TryConnectJetsonAsync();
 
             _cameraManager = new CameraManager(tableLayoutPanel9, 0, 0); //kamera streamini göstermek için CameraManager başlatılır
@@ -143,6 +149,24 @@ namespace UAV_GCS
             _serverMapDataTimer = new Timer();
             _serverMapDataTimer.Interval = 1000; // 1 Hz
             _serverMapDataTimer.Tick += ServerMapDataTimer_Tick;
+        }
+
+        private void SetFailSafeActive(bool active)
+        {
+            _isFailSafeActive = active;
+        }
+
+        private bool IsFailSafeFlightMode(string flightMode)
+        {
+            if (string.IsNullOrWhiteSpace(flightMode))
+                return false;
+
+            flightMode = flightMode.Trim().ToUpperInvariant();
+
+            return flightMode == "RTL" ||
+                   flightMode == "QRTL" ||
+                   flightMode == "FAIL_SAFE" ||
+                   flightMode.Contains("FAIL_SAFE");
         }
 
         private string ExtractQrTextFromHitPacket(string message)
@@ -202,6 +226,54 @@ namespace UAV_GCS
             }
 
             return _timeSyncManager.GetCurrentEventTimeDto();
+        }
+
+        private void ApplyLatestTargetBoxToTelemetry(TelemetryData telemetry)
+        {
+            if (telemetry == null)
+                return;
+
+            bool boxFresh =
+                _lastTargetBox != null &&
+                (DateTime.Now - _lastTargetBoxTime).TotalSeconds <= 1.5;
+
+            bool validBox =
+            _isDogfightActive &&
+            boxFresh &&
+            _lastTargetBox.Tracking &&
+            _lastTargetBox.CenterX > 0 &&
+            _lastTargetBox.CenterY > 0 &&
+            _lastTargetBox.Width > 0 &&
+            _lastTargetBox.Height > 0;
+
+            telemetry.IsTrackingTarget = validBox;
+            telemetry.TargetCenterX = validBox ? _lastTargetBox.CenterX : 0;
+            telemetry.TargetCenterY = validBox ? _lastTargetBox.CenterY : 0;
+            telemetry.TargetWidth = validBox ? _lastTargetBox.Width : 0;
+            telemetry.TargetHeight = validBox ? _lastTargetBox.Height : 0;
+        }
+        private void OnJetsonTargetBoxReceived(TargetBoxData targetBox)
+        {
+            if (targetBox == null)
+                return;
+
+            _lastTargetBox = targetBox;
+            _lastTargetBoxTime = DateTime.Now;
+
+            ApplyLatestTargetBoxToTelemetry(_lastCubeTelemetry);
+            ApplyLatestTargetBoxToTelemetry(_lastJetsonTelemetry);
+
+            bool validBox =
+            _isDogfightActive &&
+            targetBox.Tracking &&
+            targetBox.CenterX > 0 &&
+            targetBox.CenterY > 0 &&
+            targetBox.Width > 0 &&
+            targetBox.Height > 0;
+
+            AddLog(validBox
+                ? $"Jetson hedef kutusu alındı. X:{targetBox.CenterX}, Y:{targetBox.CenterY}, W:{targetBox.Width}, H:{targetBox.Height}"
+                : "Jetson hedef kutusu yok / takip pasif.");
         }
         private async void OnJetsonKamikazeReceived(string message)
         {
@@ -637,14 +709,23 @@ namespace UAV_GCS
                 return;
 
             _lastCubeTelemetry = telemetry;
+            ApplyLatestTargetBoxToTelemetry(_lastCubeTelemetry);
             _lastCubeTelemetryTime = DateTime.Now;
             _lastTelemetryForServer = telemetry;
 
+            if (_isFailSafeActive && !IsFailSafeFlightMode(telemetry.FlightMode))
+                SetFailSafeActive(false);
+
             SafeUi(() =>
             {
-                lblFlightMode.Text = string.IsNullOrWhiteSpace(telemetry.FlightMode)
+                string flightModeText = string.IsNullOrWhiteSpace(telemetry.FlightMode)
                     ? "--"
                     : telemetry.FlightMode;
+
+                if (_isFailSafeActive)
+                    flightModeText = "FAIL_SAFE / " + flightModeText;
+
+                lblFlightMode.Text = flightModeText;
 
                 double speed = telemetry.GroundSpeed;
 
@@ -690,6 +771,7 @@ namespace UAV_GCS
                 return;
 
             _lastJetsonTelemetry = telemetry;
+            ApplyLatestTargetBoxToTelemetry(_lastJetsonTelemetry);
             _lastJetsonTelemetryTime = DateTime.Now;
 
             // Cube telemetrisi tazeyse UI'yi Cube yönetsin.
@@ -698,11 +780,19 @@ namespace UAV_GCS
 
             _lastTelemetryForServer = telemetry;
 
+            if (_isFailSafeActive && !IsFailSafeFlightMode(telemetry.FlightMode))
+                SetFailSafeActive(false);
+
             SafeUi(() =>
             {
-                lblFlightMode.Text = string.IsNullOrWhiteSpace(telemetry.FlightMode)
+                string flightModeText = string.IsNullOrWhiteSpace(telemetry.FlightMode)
                     ? "JETSON"
                     : telemetry.FlightMode + " / JETSON";
+
+                if (_isFailSafeActive)
+                    flightModeText = "FAIL_SAFE / " + flightModeText;
+
+                lblFlightMode.Text = flightModeText;
 
                 lblSpeed.Text = telemetry.GroundSpeed >= 0
                     ? telemetry.GroundSpeed.ToString("0.00")
@@ -1093,24 +1183,30 @@ namespace UAV_GCS
 
         private async void btnAutonomousLanding_Click(object sender, EventArgs e)
         {
-            await SendCommandCubeFirstThenJetsonAsync(
+            bool sent = await SendCommandCubeFirstThenJetsonAsync(
                 "Otonom iniş",
                 () => _mavlinkManager.SetModeLand(),
                 "OTONOM_INIS",
                 "Otonom iniş için QLAND komutu MAVLink üzerinden Cube'a gönderildi.",
                 "Cube'a ulaşılamadığı için OTONOM_INIS komutu Jetson'a gönderildi."
             );
+
+            if (sent)
+                _isFailSafeActive = false;
         }
 
         private async void btnAutonomousFlight_Click(object sender, EventArgs e)
         {
-            await SendCommandCubeFirstThenJetsonAsync(
+            bool sent = await SendCommandCubeFirstThenJetsonAsync(
                 "Otonom kalkış",
                 () => _mavlinkManager.SendTakeoffCommand(100.0f),
                 "OTONOM_KALKIS",
                 "Otonom kalkış için TAKEOFF komutu MAVLink üzerinden Cube'a gönderildi. İrtifa: 100 m",
                 "Cube'a ulaşılamadığı için OTONOM_KALKIS komutu Jetson'a gönderildi."
             );
+
+            if (sent)
+                _isFailSafeActive = false;
         }
 
         private async void btnStartKamikaze_Click(object sender, EventArgs e)
@@ -1213,6 +1309,9 @@ namespace UAV_GCS
                 await _jetsonClient.SendUiCommandAsync("ABORT");
                 _isDogfightActive = false;
 
+                ApplyLatestTargetBoxToTelemetry(_lastCubeTelemetry);
+                ApplyLatestTargetBoxToTelemetry(_lastJetsonTelemetry);
+
                 AddLog("Görev iptal / ABORT komutu Jetson'a gönderildi.");
                 AddLog("Dogfight hedef aktarımı durduruldu.");
             }
@@ -1237,21 +1336,33 @@ namespace UAV_GCS
                 return;
             }
 
-            await SendCommandCubeFirstThenJetsonAsync(
+            bool sent = await SendCommandCubeFirstThenJetsonAsync(
                 "Fail Safe",
                 () => _mavlinkManager.SetModeRtl(),
                 "FAIL_SAFE",
                 "Fail Safe / RTL komutu MAVLink üzerinden Cube'a gönderildi.",
                 "Cube'a ulaşılamadığı için FAIL_SAFE komutu Jetson'a gönderildi."
             );
+
+            if (sent)
+            {
+                _isFailSafeActive = true;
+
+                SafeUi(() =>
+                {
+                    lblFlightMode.Text = "FAIL_SAFE / RTL";
+                });
+
+                AddLog("Fail Safe durumu YKİ uçuş modu alanında gösteriliyor.");
+            }
         }
 
-        private async Task SendCommandCubeFirstThenJetsonAsync(
-    string commandName,
-    Action cubeCommand,
-    string jetsonCommand,
-    string cubeSuccessLog,
-    string jetsonFallbackLog)
+        private async Task<bool> SendCommandCubeFirstThenJetsonAsync(
+     string commandName,
+     Action cubeCommand,
+     string jetsonCommand,
+     string cubeSuccessLog,
+     string jetsonFallbackLog)
         {
             bool cubeTried = false;
 
@@ -1263,7 +1374,7 @@ namespace UAV_GCS
                     cubeCommand.Invoke();
 
                     AddLog(cubeSuccessLog);
-                    return;
+                    return true;
                 }
                 catch (Exception ex)
                 {
@@ -1281,7 +1392,7 @@ namespace UAV_GCS
                 {
                     await _jetsonClient.SendUiCommandAsync(jetsonCommand);
                     AddLog(jetsonFallbackLog);
-                    return;
+                    return true;
                 }
                 catch (Exception ex)
                 {
@@ -1301,6 +1412,8 @@ namespace UAV_GCS
                 MessageBoxButtons.OK,
                 MessageBoxIcon.Warning
             );
+
+            return false;
         }
 
         protected override void OnFormClosing(FormClosingEventArgs e)
@@ -1325,13 +1438,16 @@ namespace UAV_GCS
 
         private async void btnLoiter_Click(object sender, EventArgs e)
         {
-            await SendCommandCubeFirstThenJetsonAsync(
+            bool sent = await SendCommandCubeFirstThenJetsonAsync(
                 "Loiter",
                 () => _mavlinkManager.SetModeLoiter(),
                 "LOITER",
                 "LOITER mod komutu MAVLink üzerinden Cube'a gönderildi.",
                 "Cube'a ulaşılamadığı için LOITER komutu Jetson'a gönderildi."
             );
+
+            if (sent)
+                _isFailSafeActive = false;
         }
 
         private void tableLayoutPanel11_Paint(object sender, PaintEventArgs e)
@@ -1341,13 +1457,16 @@ namespace UAV_GCS
 
         private async void btnRtl_Click(object sender, EventArgs e)
         {
-            await SendCommandCubeFirstThenJetsonAsync(
+            bool sent = await SendCommandCubeFirstThenJetsonAsync(
                 "Otonom uçuş",
                 () => _mavlinkManager.SetModeAuto(),
                 "OTONOM_UCUS",
                 "Otonom uçuş için AUTO mod komutu MAVLink üzerinden Cube'a gönderildi.",
                 "Cube'a ulaşılamadığı için OTONOM_UCUS komutu Jetson'a gönderildi."
             );
+
+            if (sent)
+                _isFailSafeActive = false;
         }
     }
 }

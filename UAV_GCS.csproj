@@ -144,6 +144,8 @@
   <ItemGroup>
     <Compile Include="Managers\BoundaryManager.cs" />
     <Compile Include="Managers\CameraManager.cs" />
+    <Compile Include="Models\TargetBoxData.cs" />
+    <Compile Include="Models\UavMapMarker.cs" />
     <Compile Include="Services\CompetitionApiClient.cs" />
     <Compile Include="Form1.cs">
       <SubType>Form</SubType>

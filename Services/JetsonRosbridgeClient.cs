@@ -27,6 +27,7 @@ namespace UAV_GCS
         public event Action<double> TargetErrorYReceived;
         public event Action<string> KamikazeReceived;
         public event Action<TelemetryData> TelemetryReceived;
+        public event Action<TargetBoxData> TargetBoxReceived;
 
         public async Task SendHssAreasAsync(List<HssInfoDto> hssAreas)
         {
@@ -87,6 +88,7 @@ namespace UAV_GCS
             await SubscribeAsync("/kayzer/vision/target_error_x", "std_msgs/msg/Float64");
             await SubscribeAsync("/kayzer/vision/target_error_y", "std_msgs/msg/Float64");
             await SubscribeAsync("/kayzer/telemetry", "std_msgs/msg/String");
+            await SubscribeAsync("/kayzer/vision/target_bbox", "std_msgs/msg/String");
 
             _ = Task.Run(ReceiveLoopAsync);
         }
@@ -313,10 +315,74 @@ namespace UAV_GCS
                         TelemetryReceived?.Invoke(telemetry);
                     }
                 }
+                else if (topic == "/kayzer/vision/target_bbox")
+                {
+                    TargetBoxData targetBox = ParseTargetBox(data);
+
+                    if (targetBox != null)
+                        TargetBoxReceived?.Invoke(targetBox);
+                }
             }
             catch (Exception ex)
             {
                 LogRequested?.Invoke("Jetson mesajı çözümlenemedi: " + ex.Message);
+            }
+        }
+
+        private TargetBoxData ParseTargetBox(string data)
+        {
+            if (string.IsNullOrWhiteSpace(data))
+                return null;
+
+            JObject obj = JObject.Parse(data);
+
+            return new TargetBoxData
+            {
+                Tracking =
+                    obj["tracking"]?.Value<bool>() ??
+                    obj["is_tracking"]?.Value<bool>() ??
+                    false,
+
+                CenterX =
+                    obj["center_x"]?.Value<int>() ??
+                    obj["hedef_merkez_X"]?.Value<int>() ??
+                    0,
+
+                CenterY =
+                    obj["center_y"]?.Value<int>() ??
+                    obj["hedef_merkez_Y"]?.Value<int>() ??
+                    0,
+
+                Width =
+                    obj["width"]?.Value<int>() ??
+                    obj["hedef_genislik"]?.Value<int>() ??
+                    0,
+
+                Height =
+                    obj["height"]?.Value<int>() ??
+                    obj["hedef_yukseklik"]?.Value<int>() ??
+                    0
+            };
+        }
+
+        private EventTimeDto ParseJetsonGpsTime(JToken token)
+        {
+            if (token == null)
+                return null;
+
+            try
+            {
+                return new EventTimeDto
+                {
+                    saat = token["saat"]?.Value<int>() ?? 0,
+                    dakika = token["dakika"]?.Value<int>() ?? 0,
+                    saniye = token["saniye"]?.Value<int>() ?? 0,
+                    milisaniye = token["milisaniye"]?.Value<int>() ?? 0
+                };
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -373,6 +439,18 @@ namespace UAV_GCS
                     0,
 
                 BatteryPercent = batteryPercent,
+
+                PitchDegree =
+                    obj["pitch"]?.Value<double>() ??
+                    obj["pitch_degree"]?.Value<double>() ??
+                    0,
+
+                                RollDegree =
+                    obj["roll"]?.Value<double>() ??
+                    obj["roll_degree"]?.Value<double>() ??
+                    0,
+
+                GpsTime = ParseJetsonGpsTime(obj["gps_time"] ?? obj["gps_saati"]),
 
                 HeadingDegree =
                     obj["heading"]?.Value<double>() ??
