@@ -169,60 +169,161 @@ namespace UAV_GCS
                    flightMode.Contains("FAIL_SAFE");
         }
 
+        private JObject TryParseJsonObject(string message)
+        {
+            if (string.IsNullOrWhiteSpace(message))
+                return null;
+
+            try
+            {
+                return JObject.Parse(message);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        private EventTimeDto ParseEventTimeToken(JToken token)
+        {
+            if (token == null)
+                return null;
+
+            try
+            {
+                if (token.Type == JTokenType.Object)
+                {
+                    return new EventTimeDto
+                    {
+                        saat =
+                            token["saat"]?.Value<int>() ??
+                            token["hour"]?.Value<int>() ??
+                            0,
+
+                        dakika =
+                            token["dakika"]?.Value<int>() ??
+                            token["minute"]?.Value<int>() ??
+                            0,
+
+                        saniye =
+                            token["saniye"]?.Value<int>() ??
+                            token["second"]?.Value<int>() ??
+                            0,
+
+                        milisaniye =
+                            token["milisaniye"]?.Value<int>() ??
+                            token["millisecond"]?.Value<int>() ??
+                            token["ms"]?.Value<int>() ??
+                            0
+                    };
+                }
+
+                string timeText = token.ToString();
+
+                if (string.IsNullOrWhiteSpace(timeText))
+                    return null;
+
+                // Beklenen string formatı: HH:mm:ss.fff
+                string[] mainParts = timeText.Trim().Split('.');
+                string[] hms = mainParts[0].Split(':');
+
+                if (hms.Length < 3)
+                    return null;
+
+                if (!int.TryParse(hms[0], out int hour))
+                    return null;
+
+                if (!int.TryParse(hms[1], out int minute))
+                    return null;
+
+                if (!int.TryParse(hms[2], out int second))
+                    return null;
+
+                int millisecond = 0;
+
+                if (mainParts.Length > 1)
+                {
+                    string msText = mainParts[1].PadRight(3, '0').Substring(0, 3);
+                    int.TryParse(msText, out millisecond);
+                }
+
+                return new EventTimeDto
+                {
+                    saat = hour,
+                    dakika = minute,
+                    saniye = second,
+                    milisaniye = millisecond
+                };
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
         private string ExtractQrTextFromHitPacket(string message)
         {
             if (string.IsNullOrWhiteSpace(message))
                 return "";
 
-            try
-            {
-                JObject obj = JObject.Parse(message);
+            JObject obj = TryParseJsonObject(message);
 
-                return
-                    obj["qr_text"]?.ToString() ??
-                    obj["qrMetni"]?.ToString() ??
-                    obj["qr"]?.ToString() ??
-                    "";
-            }
-            catch
-            {
+            if (obj == null)
                 return message.Trim();
-            }
+
+            return
+                obj["qr_text"]?.ToString() ??
+                obj["qrText"]?.ToString() ??
+                obj["qrMetni"]?.ToString() ??
+                obj["qr_metni"]?.ToString() ??
+                obj["qr"]?.ToString() ??
+                "";
         }
 
-        private EventTimeDto ExtractDiveEndTimeFromHitPacket(string message)
+        private EventTimeDto ExtractKamikazeStartTimeFromHitPacket(string message)
         {
-            try
+            JObject obj = TryParseJsonObject(message);
+
+            if (obj != null)
             {
-                JObject obj = JObject.Parse(message);
+                EventTimeDto parsedTime = ParseEventTimeToken(
+                    obj["start_time"] ??
+                    obj["startTime"] ??
+                    obj["baslangic_zamani"] ??
+                    obj["kamikazeBaslangicZamani"] ??
+                    obj["kamikaze_baslangic_zamani"] ??
+                    obj["dive_start_time"] ??
+                    obj["dive_start_time_str"]
+                );
 
-                string timeText = obj["dive_end_time_str"]?.ToString();
-
-                if (!string.IsNullOrWhiteSpace(timeText))
-                {
-                    string[] mainParts = timeText.Split('.');
-                    string[] hms = mainParts[0].Split(':');
-
-                    int hour = int.Parse(hms[0]);
-                    int minute = int.Parse(hms[1]);
-                    int second = int.Parse(hms[2]);
-
-                    int millisecond = 0;
-                    if (mainParts.Length > 1)
-                        millisecond = int.Parse(mainParts[1].PadRight(3, '0').Substring(0, 3));
-
-                    return new EventTimeDto
-                    {
-                        saat = hour,
-                        dakika = minute,
-                        saniye = second,
-                        milisaniye = millisecond
-                    };
-                }
+                if (parsedTime != null)
+                    return parsedTime;
             }
-            catch
+
+            if (_kamikazeStartTime != null)
+                return _kamikazeStartTime;
+
+            return _timeSyncManager.GetCurrentEventTimeDto();
+        }
+
+        private EventTimeDto ExtractKamikazeEndTimeFromHitPacket(string message)
+        {
+            JObject obj = TryParseJsonObject(message);
+
+            if (obj != null)
             {
-                // Parse edilemezse mevcut sunucu zamanını kullanacağız.
+                EventTimeDto parsedTime = ParseEventTimeToken(
+                    obj["end_time"] ??
+                    obj["endTime"] ??
+                    obj["bitis_zamani"] ??
+                    obj["kamikazeBitisZamani"] ??
+                    obj["kamikaze_bitis_zamani"] ??
+                    obj["dive_end_time"] ??
+                    obj["dive_end_time_str"]
+                );
+
+                if (parsedTime != null)
+                    return parsedTime;
             }
 
             return _timeSyncManager.GetCurrentEventTimeDto();
@@ -309,8 +410,8 @@ namespace UAV_GCS
 
                 var kamikazeInfo = new KamikazeInfoRequestDto
                 {
-                    kamikazeBaslangicZamani = _kamikazeStartTime,
-                    kamikazeBitisZamani = ExtractDiveEndTimeFromHitPacket(message),
+                    kamikazeBaslangicZamani = ExtractKamikazeStartTimeFromHitPacket(message),
+                    kamikazeBitisZamani = ExtractKamikazeEndTimeFromHitPacket(message),
                     qrMetni = qrText
                 };
 

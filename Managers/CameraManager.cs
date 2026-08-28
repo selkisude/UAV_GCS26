@@ -38,7 +38,12 @@ namespace UAV_GCS
                 _libVlcInitialized = true;
             }
 
-            _libVLC = new LibVLC();
+            _libVLC = new LibVLC(
+                "--rtsp-tcp",
+                "--network-caching=500",
+                "--live-caching=500",
+                "--avcodec-hw=none"
+            );
             _mediaPlayer = new MediaPlayer(_libVLC);
 
             _mediaPlayer.Playing += MediaPlayer_Playing;
@@ -98,8 +103,32 @@ namespace UAV_GCS
             {
                 StopStream();
 
-                using (Media media = new Media(_libVLC, new Uri(streamUrl)))
+                if (_libVLC == null || _mediaPlayer == null)
                 {
+                    SetStatusSafe("Kamera başlatılamadı.", Color.Red);
+                    LogRequested?.Invoke("Kamera başlatılamadı: LibVLC hazır değil.");
+                    ConnectionChanged?.Invoke(false);
+                    return;
+                }
+
+                using (Media media = new Media(_libVLC, streamUrl, FromType.FromLocation))
+                {
+                    // RTSP'yi UDP yerine TCP ile alır.
+                    // Paket kaybı varsa görüntü bozulmasını azaltabilir.
+                    media.AddOption(":rtsp-tcp");
+
+                    // Kopma / bloklanma varsa biraz tampon koyar.
+                    // Gecikme biraz artabilir ama görüntü daha stabil olur.
+                    media.AddOption(":network-caching=500");
+                    media.AddOption(":live-caching=500");
+
+                    // Bazı bilgisayarlarda donanımsal çözme görüntüyü bozabiliyor.
+                    media.AddOption(":avcodec-hw=none");
+
+                    // Geç kalan frame'leri direkt atlama davranışını azaltır.
+                    media.AddOption(":no-drop-late-frames");
+                    media.AddOption(":no-skip-frames");
+
                     _mediaPlayer.Play(media);
                 }
 
