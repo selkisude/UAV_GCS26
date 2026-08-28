@@ -21,13 +21,15 @@ namespace UAV_GCS
         private TimeSyncManager _timeSyncManager;
         private JetsonRosbridgeClient _jetsonClient;
 
-        private const string SERVER_BASE_URL = "https://savasaniha.teknofest.org";
+        private const string SERVER_BASE_URL = "http://10.0.0.10:10001"; //hatırladığım kadarıyla
 
         private const int MAVLINK_UDP_PORT = 14552;
 
-        private const string JETSON_IP = "192.168.1.50";
-        private const string CAMERA_STREAM_URL = "rtsp://192.168.1.50:8554/stream";
+        private const string JETSON_IP = "10.0.0.156";
+        private const string CAMERA_STREAM_URL = "rtsp://10.0.0.156:8554/stream";
 
+        private const double FIXED_QR_LATITUDE = 37.980637;   // Buraya gerçek QR enlemini yaz
+        private const double FIXED_QR_LONGITUDE = 41.842464;  // Buraya gerçek QR boylamını yaz
 
         private DateTime _lastMapUpdateTime = DateTime.MinValue; //harita güncelleme zamanını takip etmek için
 
@@ -118,6 +120,7 @@ namespace UAV_GCS
             );
 
             _mapVehicleManager = new MapVehicleManager(gMapControl1); //harita üzerinde kendi İHA ve rakip İHA ve QR marker göstermek için
+            LoadFixedQrCoordinate();
 
             _mavlinkManager = new MavlinkManager(); //MAVLink protokolü üzerinden telemetri almak ve komut göndermek için
             _mavlinkManager.LogRequested += AddLog; //MAVLink loglarını log paneline ekler
@@ -158,12 +161,17 @@ namespace UAV_GCS
                 return;
 
             if (_jetsonClient == null)
+            {
+                SetJetsonStatusText("DISCONNECTED", Color.Red);
                 return;
+            }
 
             _isTryingJetsonReconnect = true;
 
             try
             {
+                UpdateJetsonStatusLabel();
+
                 bool noRecentMessage =
                     _jetsonClient.IsConnected &&
                     _jetsonClient.LastMessageReceivedTime != DateTime.MinValue &&
@@ -171,12 +179,17 @@ namespace UAV_GCS
 
                 if (noRecentMessage)
                 {
+                    SetJetsonStatusText("CONNECTED / NO DATA", Color.Gold);
+
                     AddLog("Jetson bağlantısı açık görünüyor ama 5 saniyedir veri gelmiyor. Yeniden bağlantı deneniyor.");
+
                     await _jetsonClient.DisconnectAsync();
                 }
 
                 if (!_jetsonClient.IsConnected)
                 {
+                    SetJetsonStatusText("RECONNECTING", Color.Gold);
+
                     if ((DateTime.Now - _lastJetsonReconnectLogTime).TotalSeconds >= 10)
                     {
                         _lastJetsonReconnectLogTime = DateTime.Now;
@@ -186,11 +199,17 @@ namespace UAV_GCS
                     await _jetsonClient.ConnectAsync(JETSON_IP);
 
                     if (_jetsonClient.IsConnected)
+                    {
                         AddLog("Jetson otomatik bağlantı başarılı.");
+                    }
                 }
+
+                UpdateJetsonStatusLabel();
             }
             catch (Exception ex)
             {
+                SetJetsonStatusText("DISCONNECTED", Color.Red);
+
                 if ((DateTime.Now - _lastJetsonReconnectLogTime).TotalSeconds >= 10)
                 {
                     _lastJetsonReconnectLogTime = DateTime.Now;
@@ -327,6 +346,16 @@ namespace UAV_GCS
             }
         }
 
+        private void LoadFixedQrCoordinate()
+        {
+            _qrLatitude = FIXED_QR_LATITUDE;
+            _qrLongitude = FIXED_QR_LONGITUDE;
+            _hasQrCoordinate = true;
+
+            _mapVehicleManager?.UpdateQrTarget(_qrLatitude, _qrLongitude);
+
+            AddLog($"Sabit QR hedef koordinatı yüklendi. Lat: {_qrLatitude:0.000000}, Lon: {_qrLongitude:0.000000}");
+        }
         private string ExtractQrTextFromHitPacket(string message)
         {
             if (string.IsNullOrWhiteSpace(message))
@@ -707,6 +736,8 @@ namespace UAV_GCS
             {
                 AddLog(isConnected ? "Jetson bağlantısı aktif." : "Jetson bağlantısı kesildi.");
             });
+
+            UpdateJetsonStatusLabel();
         }
 
         private void OnJetsonStateReceived(string state)
@@ -940,6 +971,7 @@ namespace UAV_GCS
             _lastJetsonTelemetry = telemetry;
             ApplyLatestTargetBoxToTelemetry(_lastJetsonTelemetry);
             _lastJetsonTelemetryTime = DateTime.Now;
+            UpdateJetsonStatusLabel();
 
             // Cube telemetrisi tazeyse UI'yi Cube yönetsin.
             if (IsCubeTelemetryFresh())
@@ -1080,6 +1112,7 @@ namespace UAV_GCS
             SetStatus(lblMavlinkStatus, "DISCONNECTED", false);
             SetStatus(lblGpsStatus, "NO FIX", false);
             SetStatus(lblCameraStatus, "DISCONNECTED", false);
+            SetJetsonStatusText("DISCONNECTED", Color.Red);
 
             lblTeamId.Text = "--";
             lblFlightMode.Text = "--";
@@ -1137,6 +1170,36 @@ namespace UAV_GCS
             });
         }
 
+        private void SetJetsonStatusText(string text, Color color)
+        {
+            SafeUi(() =>
+            {
+                lblJetsonStatus.Text = "● " + text;
+                lblJetsonStatus.ForeColor = color;
+            });
+        }
+
+        private void UpdateJetsonStatusLabel()
+        {
+            if (_jetsonClient == null || !_jetsonClient.IsConnected)
+            {
+                SetJetsonStatusText("DISCONNECTED", Color.Red);
+                return;
+            }
+
+            bool noRecentMessage =
+                _jetsonClient.LastMessageReceivedTime != DateTime.MinValue &&
+                (DateTime.Now - _jetsonClient.LastMessageReceivedTime).TotalSeconds > 5;
+
+            if (noRecentMessage)
+            {
+                SetJetsonStatusText("CONNECTED / NO DATA", Color.Gold);
+                return;
+            }
+
+            SetJetsonStatusText("CONNECTED / DATA", Color.Lime);
+        }
+
         private void SafeUi(Action action)
         {
             if (InvokeRequired)
@@ -1181,29 +1244,23 @@ namespace UAV_GCS
         {
             try
             {
-                InitialServerDataDto data = await _competitionApiClient.GetInitialServerDataAsync();
+                HssResponseDto hss = await _competitionApiClient.GetHssCoordinatesAsync();
 
-                if (data == null)
+                if (hss?.hss_koordinat_bilgileri != null)
                 {
-                    AddLog("Sunucudan başlangıç verisi boş geldi.");
-                    return;
-                }
-
-                if (data.Hss?.hss_koordinat_bilgileri != null)
-                {
-                    string currentHssSignature = BuildHssSignature(data.Hss.hss_koordinat_bilgileri);
+                    string currentHssSignature = BuildHssSignature(hss.hss_koordinat_bilgileri);
 
                     if (currentHssSignature != _lastHssSignature)
                     {
                         _lastHssSignature = currentHssSignature;
 
-                        _boundaryManager.DrawHssAreasFromServer(data.Hss.hss_koordinat_bilgileri);
+                        _boundaryManager.DrawHssAreasFromServer(hss.hss_koordinat_bilgileri);
 
-                        AddLog($"HSS koordinatları güncellendi. Alan sayısı: {data.Hss.hss_koordinat_bilgileri.Count}");
+                        AddLog($"HSS koordinatları güncellendi. Alan sayısı: {hss.hss_koordinat_bilgileri.Count}");
 
                         if (_jetsonClient != null && _jetsonClient.IsConnected)
                         {
-                            await _jetsonClient.SendHssAreasAsync(data.Hss.hss_koordinat_bilgileri);
+                            await _jetsonClient.SendHssAreasAsync(hss.hss_koordinat_bilgileri);
                         }
                         else
                         {
@@ -1212,30 +1269,14 @@ namespace UAV_GCS
                     }
                 }
 
-                if (data.Qr != null && !_hasQrCoordinate)
+                if (hss?.sunucusaati != null)
                 {
-                    _qrLatitude = data.Qr.qrEnlem;
-                    _qrLongitude = data.Qr.qrBoylam;
-                    _hasQrCoordinate = true;
-
-                    _mapVehicleManager.UpdateQrTarget(data.Qr.qrEnlem, data.Qr.qrBoylam);
-
-                    AddLog($"QR hedef koordinatı alındı: {data.Qr.qrEnlem:0.000000}, {data.Qr.qrBoylam:0.000000}");
-                }
-
-                if (data.ServerTime != null)
-                {
-                    _timeSyncManager.UpdateServerTime(data.ServerTime);
-
-                    AddLog(
-                        $"Sunucu saati senkronlandı: " +
-                        $"{data.ServerTime.saat:00}:{data.ServerTime.dakika:00}:{data.ServerTime.saniye:00}.{data.ServerTime.milisaniye:000}"
-                    );
+                    _timeSyncManager.UpdateServerTime(hss.sunucusaati);
                 }
             }
             catch (Exception ex)
             {
-                AddLog("Sunucu harita verileri alınamadı: " + ex.Message);
+                AddLog("Sunucu HSS verileri alınamadı: " + ex.Message);
             }
         }
 
@@ -1321,7 +1362,7 @@ namespace UAV_GCS
                 await LoadServerMapDataAsync();
 
                 _serverMapDataTimer.Start();
-                AddLog("Sunucu HSS/QR güncelleme timer'ı başlatıldı. Frekans: 1 Hz");
+                AddLog("Sunucu HSS güncelleme timer'ı başlatıldı. Frekans: 1 Hz");
 
                 _telemetrySuccessCount = 0;
                 _telemetryFailCount = 0;
@@ -1638,6 +1679,16 @@ namespace UAV_GCS
 
             if (sent)
                 _isFailSafeActive = false;
+        }
+
+        private void label8_Click(object sender, EventArgs e)
+        {
+
+        }
+
+        private void label3_Click(object sender, EventArgs e)
+        {
+
         }
     }
 }

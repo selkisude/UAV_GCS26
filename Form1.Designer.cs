@@ -101,6 +101,8 @@
             this.label43 = new System.Windows.Forms.Label();
             this.pictureBox2 = new System.Windows.Forms.PictureBox();
             this.gMapControl1 = new GMap.NET.WindowsForms.GMapControl();
+            this.lblJetsonStatus = new System.Windows.Forms.Label();
+            this.label8 = new System.Windows.Forms.Label();
             this.groupBox5.SuspendLayout();
             this.panel6.SuspendLayout();
             this.panel5.SuspendLayout();
@@ -123,6 +125,8 @@
             // groupBox5
             // 
             this.groupBox5.BackColor = System.Drawing.Color.Transparent;
+            this.groupBox5.Controls.Add(this.lblJetsonStatus);
+            this.groupBox5.Controls.Add(this.label8);
             this.groupBox5.Controls.Add(this.lblServerTelemetryStatus);
             this.groupBox5.Controls.Add(this.lblMavlinkStatus);
             this.groupBox5.Controls.Add(this.lblCameraStatus);
@@ -149,7 +153,7 @@
             // 
             this.lblServerTelemetryStatus.AutoSize = true;
             this.lblServerTelemetryStatus.ForeColor = System.Drawing.Color.Gold;
-            this.lblServerTelemetryStatus.Location = new System.Drawing.Point(221, 144);
+            this.lblServerTelemetryStatus.Location = new System.Drawing.Point(221, 153);
             this.lblServerTelemetryStatus.Name = "lblServerTelemetryStatus";
             this.lblServerTelemetryStatus.Size = new System.Drawing.Size(139, 16);
             this.lblServerTelemetryStatus.TabIndex = 18;
@@ -159,7 +163,7 @@
             // 
             this.lblMavlinkStatus.AutoSize = true;
             this.lblMavlinkStatus.ForeColor = System.Drawing.Color.LimeGreen;
-            this.lblMavlinkStatus.Location = new System.Drawing.Point(291, 79);
+            this.lblMavlinkStatus.Location = new System.Drawing.Point(291, 71);
             this.lblMavlinkStatus.Name = "lblMavlinkStatus";
             this.lblMavlinkStatus.Size = new System.Drawing.Size(100, 16);
             this.lblMavlinkStatus.TabIndex = 17;
@@ -169,7 +173,7 @@
             // 
             this.lblCameraStatus.AutoSize = true;
             this.lblCameraStatus.ForeColor = System.Drawing.Color.Lime;
-            this.lblCameraStatus.Location = new System.Drawing.Point(291, 107);
+            this.lblCameraStatus.Location = new System.Drawing.Point(291, 99);
             this.lblCameraStatus.Name = "lblCameraStatus";
             this.lblCameraStatus.Size = new System.Drawing.Size(67, 16);
             this.lblCameraStatus.TabIndex = 16;
@@ -179,7 +183,7 @@
             // 
             this.lblServerStatus.AutoSize = true;
             this.lblServerStatus.ForeColor = System.Drawing.Color.Lime;
-            this.lblServerStatus.Location = new System.Drawing.Point(290, 24);
+            this.lblServerStatus.Location = new System.Drawing.Point(290, 16);
             this.lblServerStatus.Name = "lblServerStatus";
             this.lblServerStatus.Size = new System.Drawing.Size(70, 16);
             this.lblServerStatus.TabIndex = 15;
@@ -189,7 +193,7 @@
             // 
             this.lblGpsStatus.AutoSize = true;
             this.lblGpsStatus.ForeColor = System.Drawing.Color.Lime;
-            this.lblGpsStatus.Location = new System.Drawing.Point(291, 52);
+            this.lblGpsStatus.Location = new System.Drawing.Point(291, 44);
             this.lblGpsStatus.Name = "lblGpsStatus";
             this.lblGpsStatus.Size = new System.Drawing.Size(42, 16);
             this.lblGpsStatus.TabIndex = 14;
@@ -199,7 +203,7 @@
             // 
             this.label23.AutoSize = true;
             this.label23.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(224)))), ((int)(((byte)(224)))), ((int)(((byte)(224)))));
-            this.label23.Location = new System.Drawing.Point(221, 52);
+            this.label23.Location = new System.Drawing.Point(221, 44);
             this.label23.Name = "label23";
             this.label23.Size = new System.Drawing.Size(31, 16);
             this.label23.TabIndex = 13;
@@ -217,7 +221,7 @@
             // 
             this.label21.AutoSize = true;
             this.label21.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(224)))), ((int)(((byte)(224)))), ((int)(((byte)(224)))));
-            this.label21.Location = new System.Drawing.Point(220, 107);
+            this.label21.Location = new System.Drawing.Point(220, 99);
             this.label21.Name = "label21";
             this.label21.Size = new System.Drawing.Size(53, 16);
             this.label21.TabIndex = 11;
@@ -227,7 +231,7 @@
             // 
             this.label20.AutoSize = true;
             this.label20.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(224)))), ((int)(((byte)(224)))), ((int)(((byte)(224)))));
-            this.label20.Location = new System.Drawing.Point(220, 24);
+            this.label20.Location = new System.Drawing.Point(220, 16);
             this.label20.Name = "label20";
             this.label20.Size = new System.Drawing.Size(45, 16);
             this.label20.TabIndex = 10;
@@ -237,7 +241,7 @@
             // 
             this.label19.AutoSize = true;
             this.label19.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(224)))), ((int)(((byte)(224)))), ((int)(((byte)(224)))));
-            this.label19.Location = new System.Drawing.Point(220, 79);
+            this.label19.Location = new System.Drawing.Point(220, 71);
             this.label19.Name = "label19";
             this.label19.Size = new System.Drawing.Size(63, 16);
             this.label19.TabIndex = 9;
@@ -1037,6 +1041,28 @@
             this.gMapControl1.TabIndex = 13;
             this.gMapControl1.Zoom = 15D;
             // 
+            // lblJetsonStatus
+            // 
+            this.lblJetsonStatus.AutoSize = true;
+            this.lblJetsonStatus.ForeColor = System.Drawing.Color.Lime;
+            this.lblJetsonStatus.Location = new System.Drawing.Point(291, 125);
+            this.lblJetsonStatus.Name = "lblJetsonStatus";
+            this.lblJetsonStatus.Size = new System.Drawing.Size(100, 16);
+            this.lblJetsonStatus.TabIndex = 20;
+            this.lblJetsonStatus.Text = "● CONNECTED";
+            this.lblJetsonStatus.Click += new System.EventHandler(this.label3_Click);
+            // 
+            // label8
+            // 
+            this.label8.AutoSize = true;
+            this.label8.ForeColor = System.Drawing.Color.FromArgb(((int)(((byte)(224)))), ((int)(((byte)(224)))), ((int)(((byte)(224)))));
+            this.label8.Location = new System.Drawing.Point(220, 125);
+            this.label8.Name = "label8";
+            this.label8.Size = new System.Drawing.Size(47, 16);
+            this.label8.TabIndex = 19;
+            this.label8.Text = "Jetson";
+            this.label8.Click += new System.EventHandler(this.label8_Click);
+            // 
             // Form1
             // 
             this.AutoScaleDimensions = new System.Drawing.SizeF(6F, 13F);
@@ -1157,6 +1183,8 @@
         private System.Windows.Forms.Label lblServerTelemetryStatus;
         private System.Windows.Forms.Button btnLoiter;
         private System.Windows.Forms.Button btnRtl;
+        private System.Windows.Forms.Label lblJetsonStatus;
+        private System.Windows.Forms.Label label8;
     }
 }
 
