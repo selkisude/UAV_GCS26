@@ -77,6 +77,10 @@ namespace UAV_GCS
 
         private bool _isFailSafeActive = false;
 
+        private Timer _jetsonReconnectTimer;
+        private bool _isTryingJetsonReconnect = false;
+        private DateTime _lastJetsonReconnectLogTime = DateTime.MinValue;
+
         public Form1()
         {
             InitializeComponent(); //desindaki komponentleri başlatır
@@ -98,6 +102,10 @@ namespace UAV_GCS
             _jetsonClient.KamikazeReceived += OnJetsonKamikazeReceived;
             _jetsonClient.TelemetryReceived += OnJetsonTelemetryReceived;
             _jetsonClient.TargetBoxReceived += OnJetsonTargetBoxReceived;
+
+            InitializeJetsonReconnectTimer();
+            _jetsonReconnectTimer.Start();
+
             _ = TryConnectJetsonAsync();
 
             _cameraManager = new CameraManager(tableLayoutPanel9, 0, 0); //kamera streamini göstermek için CameraManager başlatılır
@@ -135,6 +143,64 @@ namespace UAV_GCS
             AddLog("Yer kontrol istasyonu başlatıldı.");
             AddLog("Gerçek bağlantılar bekleniyor: MAVLink, kamera stream ve yarışma sunucusu.");
             AddLog("HSS alanları yarışma sunucusu bağlantısından sonra yüklenecek.");
+        }
+
+        private void InitializeJetsonReconnectTimer()
+        {
+            _jetsonReconnectTimer = new Timer();
+            _jetsonReconnectTimer.Interval = 5000; // 5 saniyede bir kontrol
+            _jetsonReconnectTimer.Tick += JetsonReconnectTimer_Tick;
+        }
+
+        private async void JetsonReconnectTimer_Tick(object sender, EventArgs e)
+        {
+            if (_isTryingJetsonReconnect)
+                return;
+
+            if (_jetsonClient == null)
+                return;
+
+            _isTryingJetsonReconnect = true;
+
+            try
+            {
+                bool noRecentMessage =
+                    _jetsonClient.IsConnected &&
+                    _jetsonClient.LastMessageReceivedTime != DateTime.MinValue &&
+                    (DateTime.Now - _jetsonClient.LastMessageReceivedTime).TotalSeconds > 5;
+
+                if (noRecentMessage)
+                {
+                    AddLog("Jetson bağlantısı açık görünüyor ama 5 saniyedir veri gelmiyor. Yeniden bağlantı deneniyor.");
+                    await _jetsonClient.DisconnectAsync();
+                }
+
+                if (!_jetsonClient.IsConnected)
+                {
+                    if ((DateTime.Now - _lastJetsonReconnectLogTime).TotalSeconds >= 10)
+                    {
+                        _lastJetsonReconnectLogTime = DateTime.Now;
+                        AddLog("Jetson bağlantısı yok. Otomatik bağlantı deneniyor...");
+                    }
+
+                    await _jetsonClient.ConnectAsync(JETSON_IP);
+
+                    if (_jetsonClient.IsConnected)
+                        AddLog("Jetson otomatik bağlantı başarılı.");
+                }
+            }
+            catch (Exception ex)
+            {
+                if ((DateTime.Now - _lastJetsonReconnectLogTime).TotalSeconds >= 10)
+                {
+                    _lastJetsonReconnectLogTime = DateTime.Now;
+                    AddLog("Jetson otomatik bağlantı başarısız: " + ex.Message);
+                }
+            }
+            finally
+            {
+                _isTryingJetsonReconnect = false;
+            }
         }
 
         private void InitializeJetsonServerTimeTimer()
@@ -1528,10 +1594,14 @@ namespace UAV_GCS
             _serverMapDataTimer?.Stop();
             _serverMapDataTimer?.Dispose();
 
+            _jetsonReconnectTimer?.Stop();
+            _jetsonReconnectTimer?.Dispose();
+
             _cameraManager?.Dispose();
             _mavlinkManager?.Dispose();
             _competitionApiClient?.Dispose();
             _jetsonClient?.Dispose();
+
 
 
             base.OnFormClosing(e);

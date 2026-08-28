@@ -28,6 +28,7 @@ namespace UAV_GCS
         public event Action<string> KamikazeReceived;
         public event Action<TelemetryData> TelemetryReceived;
         public event Action<TargetBoxData> TargetBoxReceived;
+        public DateTime LastMessageReceivedTime { get; private set; } = DateTime.MinValue;
 
         public async Task SendHssAreasAsync(List<HssInfoDto> hssAreas)
         {
@@ -80,6 +81,8 @@ namespace UAV_GCS
 
             LogRequested?.Invoke("Jetson rosbridge bağlantısı kuruldu.");
             ConnectionChanged?.Invoke(true);
+
+            LastMessageReceivedTime = DateTime.Now;
 
             await SubscribeAsync("/kayzer/kilitlenme_basarili", "std_msgs/msg/String");
             await SubscribeAsync("/kayzer/real_state", "std_msgs/msg/String");
@@ -251,7 +254,7 @@ namespace UAV_GCS
                     } while (!result.EndOfMessage);
 
                     string json = messageBuilder.ToString();
-
+                    LastMessageReceivedTime = DateTime.Now;
                     HandleIncomingMessage(json);
                 }
             }
