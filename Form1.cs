@@ -83,6 +83,12 @@ namespace UAV_GCS
         private bool _isTryingJetsonReconnect = false;
         private DateTime _lastJetsonReconnectLogTime = DateTime.MinValue;
 
+        private Timer _cameraWatchdogTimer;
+        private DateTime _lastCameraNoVideoLogTime = DateTime.MinValue;
+
+        private bool _isTryingCameraReconnect = false;
+        private DateTime _lastCameraReconnectTime = DateTime.MinValue;
+
         public Form1()
         {
             InitializeComponent(); //desindaki komponentleri başlatır
@@ -113,6 +119,8 @@ namespace UAV_GCS
             _cameraManager = new CameraManager(tableLayoutPanel9, 0, 0); //kamera streamini göstermek için CameraManager başlatılır
             _cameraManager.LogRequested += AddLog; //kamera loglarını log paneline ekler
             _cameraManager.Initialize(); //kamera streamini başlatır
+            InitializeCameraWatchdogTimer();
+            _cameraWatchdogTimer.Start();
 
             _boundaryManager = new BoundaryManager( //sınır ve hss alanlarını haritada çizmek için
                 gMapControl1,
@@ -146,6 +154,82 @@ namespace UAV_GCS
             AddLog("Yer kontrol istasyonu başlatıldı.");
             AddLog("Gerçek bağlantılar bekleniyor: MAVLink, kamera stream ve yarışma sunucusu.");
             AddLog("HSS alanları yarışma sunucusu bağlantısından sonra yüklenecek.");
+        }
+
+        private void InitializeCameraWatchdogTimer()
+        {
+            _cameraWatchdogTimer = new Timer();
+            _cameraWatchdogTimer.Interval = 1000; // 1 saniyede bir kontrol
+            _cameraWatchdogTimer.Tick += CameraWatchdogTimer_Tick;
+        }
+
+        private void CameraWatchdogTimer_Tick(object sender, EventArgs e)
+        {
+            if (_cameraManager == null)
+            {
+                SetStatus(lblCameraStatus, "DISCONNECTED", false);
+                return;
+            }
+
+            if (!_cameraManager.IsStreamActive)
+            {
+                SetStatus(lblCameraStatus, "DISCONNECTED", false);
+
+                if (!_isTryingCameraReconnect &&
+                    (DateTime.Now - _lastCameraReconnectTime).TotalSeconds >= 10)
+                {
+                    _isTryingCameraReconnect = true;
+                    _lastCameraReconnectTime = DateTime.Now;
+
+                    try
+                    {
+                        AddLog("Kamera bağlantısı yok. Yeniden bağlantı deneniyor...");
+                        TryStartCameraStream();
+                    }
+                    finally
+                    {
+                        _isTryingCameraReconnect = false;
+                    }
+                }
+
+                return;
+            }
+
+            bool noRecentFrame =
+                _cameraManager.LastFrameReceivedTime != DateTime.MinValue &&
+                (DateTime.Now - _cameraManager.LastFrameReceivedTime).TotalSeconds > 10;
+
+            if (noRecentFrame)
+            {
+                SetStatus(lblCameraStatus, "CONNECTED / NO VIDEO", false);
+
+                if ((DateTime.Now - _lastCameraNoVideoLogTime).TotalSeconds >= 10)
+                {
+                    _lastCameraNoVideoLogTime = DateTime.Now;
+                    AddLog("Kamera bağlantısı açık görünüyor ama 10 saniyedir görüntü akmıyor.");
+                }
+
+                if (!_isTryingCameraReconnect &&
+                    (DateTime.Now - _lastCameraReconnectTime).TotalSeconds >= 10)
+                {
+                    _isTryingCameraReconnect = true;
+                    _lastCameraReconnectTime = DateTime.Now;
+
+                    try
+                    {
+                        AddLog("Kamera stream yeniden başlatılıyor...");
+                        TryStartCameraStream();
+                    }
+                    finally
+                    {
+                        _isTryingCameraReconnect = false;
+                    }
+                }
+
+                return;
+            }
+
+            SetStatus(lblCameraStatus, "ACTIVE", true);
         }
 
         private void InitializeJetsonReconnectTimer()
@@ -969,6 +1053,15 @@ namespace UAV_GCS
             _lastJetsonTelemetryTime = DateTime.Now;
             UpdateJetsonStatusLabel();
 
+            AddLog(
+    $"JETSON TELEMETRİ | Fix:{telemetry.HasGpsFix} " +
+    $"Lat:{telemetry.Latitude:0.000000} " +
+    $"Lon:{telemetry.Longitude:0.000000} " +
+    $"Alt:{telemetry.RelativeAltitudeMeters:0.0} " +
+    $"Bat:{telemetry.BatteryPercent} " +
+    $"Mode:{telemetry.FlightMode}"
+);
+
             // Cube telemetrisi tazeyse UI'yi Cube yönetsin.
             if (IsCubeTelemetryFresh())
                 return;
@@ -1024,7 +1117,7 @@ namespace UAV_GCS
         private bool IsJetsonTelemetryFresh()
         {
             return _lastJetsonTelemetry != null &&
-                   (DateTime.Now - _lastJetsonTelemetryTime).TotalSeconds <= 2;
+                   (DateTime.Now - _lastJetsonTelemetryTime).TotalSeconds <= 5;
         }
 
         private TelemetryData GetBestTelemetryForServer()
@@ -1633,6 +1726,9 @@ namespace UAV_GCS
 
             _jetsonReconnectTimer?.Stop();
             _jetsonReconnectTimer?.Dispose();
+
+            _cameraWatchdogTimer?.Stop();
+            _cameraWatchdogTimer?.Dispose();
 
             _cameraManager?.Dispose();
             _mavlinkManager?.Dispose();

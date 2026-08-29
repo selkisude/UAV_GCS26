@@ -23,6 +23,9 @@ namespace UAV_GCS
         public event Action<string> LogRequested;
         public event Action<bool> ConnectionChanged;
 
+        public DateTime LastFrameReceivedTime { get; private set; } = DateTime.MinValue;
+        public bool IsStreamActive { get; private set; } = false;
+
         public CameraManager(TableLayoutPanel parentLayout, int column, int row)
         {
             _parentLayout = parentLayout;
@@ -46,9 +49,60 @@ namespace UAV_GCS
             );
             _mediaPlayer = new MediaPlayer(_libVLC);
 
-            _mediaPlayer.Playing += MediaPlayer_Playing;
-            _mediaPlayer.Stopped += MediaPlayer_Stopped;
-            _mediaPlayer.EncounteredError += MediaPlayer_EncounteredError;
+            _mediaPlayer.Playing += (s, e) =>
+            {
+                IsStreamActive = true;
+                LastFrameReceivedTime = DateTime.Now;
+
+                SetStatusSafe("Kamera bağlantısı aktif.", Color.Lime);
+
+                LogRequested?.Invoke("Kamera stream aktif.");
+                ConnectionChanged?.Invoke(true);
+            };
+
+            _mediaPlayer.TimeChanged += (s, e) =>
+            {
+                LastFrameReceivedTime = DateTime.Now;
+            };
+
+            _mediaPlayer.PositionChanged += (s, e) =>
+            {
+                LastFrameReceivedTime = DateTime.Now;
+            };
+
+            _mediaPlayer.EncounteredError += (s, e) =>
+            {
+                IsStreamActive = false;
+                LastFrameReceivedTime = DateTime.MinValue;
+
+                SetStatusSafe("Kamera bağlantı hatası.", Color.Red);
+
+                LogRequested?.Invoke("Kamera stream hatası oluştu.");
+                ConnectionChanged?.Invoke(false);
+            };
+
+            _mediaPlayer.Stopped += (s, e) =>
+            {
+                IsStreamActive = false;
+                LastFrameReceivedTime = DateTime.MinValue;
+
+                SetStatusSafe("Kamera durduruldu.", Color.OrangeRed);
+
+                LogRequested?.Invoke("Kamera stream durdu.");
+                ConnectionChanged?.Invoke(false);
+            };
+
+            _mediaPlayer.EndReached += (s, e) =>
+            {
+                IsStreamActive = false;
+                LastFrameReceivedTime = DateTime.MinValue;
+
+                SetStatusSafe("Kamera stream sona erdi.", Color.OrangeRed);
+
+                LogRequested?.Invoke("Kamera stream sona erdi.");
+                ConnectionChanged?.Invoke(false);
+            };
+
 
             _cameraGroupBox = new GroupBox
             {
@@ -101,6 +155,7 @@ namespace UAV_GCS
 
             try
             {
+                
                 StopStream();
 
                 if (_libVLC == null || _mediaPlayer == null)
@@ -146,34 +201,17 @@ namespace UAV_GCS
 
         public void StopStream()
         {
-            if (_mediaPlayer != null && _mediaPlayer.IsPlaying)
+            IsStreamActive = false;
+            LastFrameReceivedTime = DateTime.MinValue;
+
+            bool wasPlaying = _mediaPlayer != null && _mediaPlayer.IsPlaying;
+
+            if (wasPlaying)
             {
                 _mediaPlayer.Stop();
-                SetStatusSafe("Kamera durduruldu.", Color.OrangeRed);
-                ConnectionChanged?.Invoke(false);
-                LogRequested?.Invoke("Kamera stream durduruldu.");
             }
         }
 
-        private void MediaPlayer_Playing(object sender, EventArgs e)
-        {
-            SetStatusSafe("Kamera bağlantısı aktif.", Color.Lime);
-            ConnectionChanged?.Invoke(true);
-            LogRequested?.Invoke("Kamera bağlantısı aktif.");
-        }
-
-        private void MediaPlayer_Stopped(object sender, EventArgs e)
-        {
-            SetStatusSafe("Kamera durduruldu.", Color.OrangeRed);
-            ConnectionChanged?.Invoke(false);
-        }
-
-        private void MediaPlayer_EncounteredError(object sender, EventArgs e)
-        {
-            SetStatusSafe("Kamera bağlantı hatası.", Color.Red);
-            ConnectionChanged?.Invoke(false);
-            LogRequested?.Invoke("Kamera bağlantı hatası oluştu.");
-        }
 
         private void SetStatus(string text, Color color)
         {
@@ -206,9 +244,7 @@ namespace UAV_GCS
         {
             if (_mediaPlayer != null)
             {
-                _mediaPlayer.Playing -= MediaPlayer_Playing;
-                _mediaPlayer.Stopped -= MediaPlayer_Stopped;
-                _mediaPlayer.EncounteredError -= MediaPlayer_EncounteredError;
+                
 
                 if (_mediaPlayer.IsPlaying)
                     _mediaPlayer.Stop();
