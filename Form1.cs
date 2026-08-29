@@ -591,7 +591,7 @@ namespace UAV_GCS
 
                 await _jetsonClient.SendServerTimeMsAsync(serverTimeMs);
             }
-            }
+            
             catch (Exception ex)
             {
                 AddLog("Jetson'a sunucu saati gönderilemedi: " + ex.Message);

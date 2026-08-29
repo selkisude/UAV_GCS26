@@ -85,6 +85,7 @@ namespace UAV_GCS
             LastMessageReceivedTime = DateTime.Now;
 
             await AdvertiseAsync("/kayzer/server_time", "std_msgs/msg/Float64");
+            await AdvertiseAsync("/sunucu_saati", "std_msgs/msg/String");
             await AdvertiseAsync("/kayzer/ui_command", "std_msgs/msg/String");
             await AdvertiseAsync("/kayzer/hss_koordinatlari", "std_msgs/msg/String");
 
