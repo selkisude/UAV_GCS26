@@ -587,14 +587,10 @@ namespace UAV_GCS
             {
                 DateTime serverNow = _timeSyncManager.GetCurrentServerDateTime();
 
-                string timeText =
-                    $"{serverNow.Hour:00}:{serverNow.Minute:00}:{serverNow.Second:00}.{serverNow.Millisecond:000}";
-
-                await _jetsonClient.SendServerTimeAsync(timeText);
-
                 double serverTimeMs = new DateTimeOffset(serverNow).ToUnixTimeMilliseconds();
 
                 await _jetsonClient.SendServerTimeMsAsync(serverTimeMs);
+            }
             }
             catch (Exception ex)
             {

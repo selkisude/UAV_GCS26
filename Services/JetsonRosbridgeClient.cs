@@ -84,6 +84,10 @@ namespace UAV_GCS
 
             LastMessageReceivedTime = DateTime.Now;
 
+            await AdvertiseAsync("/kayzer/server_time", "std_msgs/msg/Float64");
+            await AdvertiseAsync("/kayzer/ui_command", "std_msgs/msg/String");
+            await AdvertiseAsync("/kayzer/hss_koordinatlari", "std_msgs/msg/String");
+
             await SubscribeAsync("/kayzer/kilitlenme_basarili", "std_msgs/msg/String");
             await SubscribeAsync("/kayzer/real_state", "std_msgs/msg/String");
             await SubscribeAsync("/kayzer/kamikaze/hit_packet", "std_msgs/msg/String");
@@ -211,6 +215,20 @@ namespace UAV_GCS
             await SendJsonAsync(packet);
 
             LogRequested?.Invoke("Jetson topic aboneliği yapıldı: " + topic);
+        }
+
+        private async Task AdvertiseAsync(string topic, string type)
+        {
+            var packet = new
+            {
+                op = "advertise",
+                topic = topic,
+                type = type
+            };
+
+            await SendJsonAsync(packet);
+
+            LogRequested?.Invoke("Jetson topic advertise yapıldı: " + topic + " / " + type);
         }
 
         private async Task SendJsonAsync(object packet)

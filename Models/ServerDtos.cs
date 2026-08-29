@@ -21,7 +21,7 @@ namespace UAV_GCS
     {
         public int saat { get; set; }
         public int dakika { get; set; }
-        public int saniye { get; set; }
+        public int saniye { get; set; } 
         public int milisaniye { get; set; }
     }
 
@@ -38,7 +38,7 @@ namespace UAV_GCS
         public double iha_yatis { get; set; }
 
         public double iha_hiz { get; set; }
-        public double iha_batarya { get; set; }
+        public int iha_batarya { get; set; }
 
         public int iha_otonom { get; set; }
         public int iha_kilitlenme { get; set; }
