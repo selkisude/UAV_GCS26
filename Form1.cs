@@ -274,7 +274,7 @@ namespace UAV_GCS
                 {
                     SetJetsonStatusText("RECONNECTING", Color.Gold);
 
-                    if ((DateTime.Now - _lastJetsonReconnectLogTime).TotalSeconds >= 10)
+                    if ((DateTime.Now - _lastJetsonReconnectLogTime).TotalSeconds >= 5)
                     {
                         _lastJetsonReconnectLogTime = DateTime.Now;
                         AddLog("Jetson bağlantısı yok. Otomatik bağlantı deneniyor...");
@@ -1052,15 +1052,6 @@ namespace UAV_GCS
             ApplyLatestTargetBoxToTelemetry(_lastJetsonTelemetry);
             _lastJetsonTelemetryTime = DateTime.Now;
             UpdateJetsonStatusLabel();
-
-            AddLog(
-    $"JETSON TELEMETRİ | Fix:{telemetry.HasGpsFix} " +
-    $"Lat:{telemetry.Latitude:0.000000} " +
-    $"Lon:{telemetry.Longitude:0.000000} " +
-    $"Alt:{telemetry.RelativeAltitudeMeters:0.0} " +
-    $"Bat:{telemetry.BatteryPercent} " +
-    $"Mode:{telemetry.FlightMode}"
-);
 
             // Cube telemetrisi tazeyse UI'yi Cube yönetsin.
             if (IsCubeTelemetryFresh())
